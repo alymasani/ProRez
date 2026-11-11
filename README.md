@@ -230,7 +230,7 @@ A future installer wizard will streamline Windows deployment, dependency checks,
 
 ## Development Roadmap
 
-- ✅ **Phase 1:** Web dashboard and responsive UI
+- [x] **Phase 1:** Web dashboard and responsive UI
 - [ ] **Phase 2:** Database, manual job submissions, and configurable search profiles
 - [ ] **Phase 3:** Automated job discovery using free ATS APIs
 - [ ] **Phase 4:** Job filtering, matching, and deduplication
