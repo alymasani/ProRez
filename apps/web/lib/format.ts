@@ -1,0 +1,54 @@
+import type { IsoDateTime, JobLocation } from "@/lib/types";
+import { ARRANGEMENT_LABELS } from "@/lib/labels";
+
+/*
+ * Dates are formatted with a fixed locale and time zone so that server and
+ * client renders are byte-identical (no hydration mismatches) and output does
+ * not depend on the machine running the build.
+ */
+const LOCALE = "en-CA";
+const TIME_ZONE = "America/Toronto";
+
+const dateFormatter = new Intl.DateTimeFormat(LOCALE, {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+const dateTimeFormatter = new Intl.DateTimeFormat(LOCALE, {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
+
+export function formatDate(value: IsoDateTime | null | undefined): string {
+  if (!value) return "—";
+  return dateFormatter.format(new Date(value));
+}
+
+export function formatDateTime(value: IsoDateTime | null | undefined): string {
+  if (!value) return "—";
+  return dateTimeFormatter.format(new Date(value));
+}
+
+export function formatDuration(months: number | null): string {
+  if (months === null) return "Not specified";
+  return `${months} month${months === 1 ? "" : "s"}`;
+}
+
+export function formatLocation(location: JobLocation): string {
+  return `${location.city}, ${location.province}`;
+}
+
+/** "Toronto, ON · Hybrid" or "Toronto, ON +2 more". */
+export function formatPrimaryLocation(locations: JobLocation[]): string {
+  if (locations.length === 0) return "Location not specified";
+  const [first, ...rest] = locations;
+  const base = `${formatLocation(first)} · ${ARRANGEMENT_LABELS[first.arrangement]}`;
+  return rest.length > 0 ? `${base} +${rest.length} more` : base;
+}
