@@ -105,14 +105,16 @@ export function createPrismaRepository(prisma: PrismaClient): DataRepository {
 
     async listEmployerBoards() {
       const [rows, running, active] = await Promise.all([
-        prisma.employerBoard.findMany({ orderBy: [{ employerName: "asc" }, { provider: "asc" }] }),
+        prisma.employerBoard.findMany({ orderBy: [{ employerName: "asc" }, { provider: "asc" }], include: { company: { select: { domain: true } } } }),
         prisma.boardSyncRun.findMany({ where: { status: "running" }, select: { boardId: true } }),
         // Active = currently listed sightings, one per job per board.
         prisma.sourceObservation.groupBy({ by: ["boardId"], where: { boardId: { not: null }, closedAt: null }, _count: { _all: true } }),
       ]);
       const runningIds = new Set(running.map((r) => r.boardId));
       const activeById = new Map(active.map((a) => [a.boardId, a._count._all]));
-      return rows.map((row) => toEmployerBoard(row, { syncing: runningIds.has(row.id), activeJobCount: activeById.get(row.id) ?? 0 }));
+      return rows.map((row) =>
+        toEmployerBoard(row, { syncing: runningIds.has(row.id), activeJobCount: activeById.get(row.id) ?? 0, companyDomain: row.company?.domain ?? null }),
+      );
     },
 
     async getSearchProfile(id) {

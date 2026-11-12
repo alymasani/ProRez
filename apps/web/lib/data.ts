@@ -180,3 +180,12 @@ export function toJobIndex(jobs: readonly JobPosting[]): JobIndex {
 export async function getJobIndex(): Promise<JobIndex> {
   return toJobIndex(await getJobs());
 }
+
+/** Discovery section of the Boards page (database mode only; fixtures have no discovery). */
+export async function getDiscoveryDashboard(): Promise<import("@/lib/discovery/dashboard").DiscoveryDashboard | null> {
+  if (resolveDataSource(process.env) === "fixtures") return null;
+  const { connection } = await import("next/server");
+  await connection();
+  const [{ getPrisma }, { loadDiscoveryDashboard }] = await Promise.all([import("@/lib/db/client"), import("@/lib/discovery/dashboard")]);
+  return loadDiscoveryDashboard(getPrisma());
+}

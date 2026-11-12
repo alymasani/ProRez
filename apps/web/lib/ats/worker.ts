@@ -20,6 +20,7 @@ import type { AtsProvider } from "../types";
 import type { HttpTransport } from "./http";
 import { DEFAULT_WORKER_CONFIG, type WorkerConfig } from "./schedule";
 import { syncBoard, type SyncSummary } from "./sync";
+import { runDiscoveryIfDue, type DiscoveryDeps } from "../discovery/run";
 import type { AtsAdapter } from "./types";
 
 export interface ClaimedBoard {
@@ -95,6 +96,11 @@ export interface WorkerDeps {
   now?: () => Date;
   /** Test hook: replace provider adapters. */
   adapterFor?: (provider: AtsProvider) => AtsAdapter | undefined;
+  /**
+   * Milestone 3C: automatic board discovery runs in the same process, in its
+   * own lane (never blocking board syncs), when its durable schedule is due.
+   */
+  discovery?: () => DiscoveryDeps;
 }
 
 /**
@@ -148,13 +154,18 @@ export async function runClaimedBoard(deps: WorkerDeps, board: ClaimedBoard, sig
       status: v.status,
       complete: v.complete,
       fetched: v.fetched,
+      eligible: v.eligible,
       new: v.created,
       updated: v.updated,
       unchanged: v.unchanged,
       reactivated: v.reactivated,
       missing: v.missing,
       inactivated: v.closed,
-      skipped: v.skipped,
+      duplicate: v.duplicate,
+      filteredLocation: v.filteredLocation,
+      filteredEmploymentType: v.filteredEmploymentType,
+      invalid: v.invalid,
+      enrichmentIncomplete: v.enrichmentIncomplete,
       errors: v.errorCount,
       ms: v.durationMs,
       next: next?.nextSyncAt?.toISOString() ?? "paused",
@@ -233,8 +244,20 @@ export function startWorker(deps: WorkerDeps, options: { graceMs?: number } = {}
     leaseMinutes: config.leaseMs / 60_000,
   });
 
+  // Discovery lane: at most one run in flight, independent of board syncs.
+  let discoveryInFlight: Promise<unknown> | null = null;
+  const maybeStartDiscovery = () => {
+    if (!deps.discovery || discoveryInFlight || stopping) return;
+    discoveryInFlight = runDiscoveryIfDue(deps.discovery(), { owner, signal: controller.signal })
+      .catch((error: unknown) => log("discovery_failed", { error: error instanceof Error ? error.message : String(error) }))
+      .finally(() => {
+        discoveryInFlight = null;
+      });
+  };
+
   const loop = (async () => {
     while (!stopping) {
+      maybeStartDiscovery();
       try {
         const results = await drainDueBoards({ ...deps, owner, config, log }, controller.signal);
         if (results.length > 0) log("tick_done", { synced: results.length });
@@ -262,6 +285,7 @@ export function startWorker(deps: WorkerDeps, options: { graceMs?: number } = {}
       (wake as (() => void) | null)?.();
       const grace = setTimeout(() => controller.abort(), options.graceMs ?? 30_000);
       await loop;
+      await discoveryInFlight;
       clearTimeout(grace);
       log("worker_stopped", { owner });
     },

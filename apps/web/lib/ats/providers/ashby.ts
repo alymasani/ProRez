@@ -90,6 +90,6 @@ export const ashbyAdapter: AtsAdapter = {
     }
     if (unlisted > 0) warnings.push(`Skipped ${unlisted} unlisted job${unlisted === 1 ? "" : "s"} (direct-link only).`);
     // Unlisted (direct-link-only) jobs are excluded on purpose, not lost.
-    return { postings, warnings, requests: 1, ...completeness(MALFORMED_REASON(malformed)) };
+    return { postings, warnings, requests: 1, invalidItems: malformed, ...completeness(MALFORMED_REASON(malformed)) };
   },
 };

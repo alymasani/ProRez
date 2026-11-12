@@ -79,6 +79,18 @@ export interface SyncSummary {
   missing: number;
   /** Newly inactivated postings (absent from two consecutive complete snapshots). */
   closed: number;
+  /** Passed the Canadian location and employment-type filters (= fetched − filtered). */
+  eligible: number;
+  filteredLocation: number;
+  filteredEmploymentType: number;
+  /** Eligible postings recorded as another sighting of a job already known from another source. */
+  duplicate: number;
+  /** Provider items dropped as unreadable; not part of `fetched`. */
+  invalid: number;
+  /** Eligible postings that could not be saved. */
+  ingestErrors: number;
+  /** Secondary: eligible postings with a missing or incomplete description. */
+  enrichmentIncomplete: number;
   skipped: number;
   errorCount: number;
   durationMs: number;
@@ -100,7 +112,7 @@ export interface SyncOptions {
   random?: () => number;
 }
 
-type Outcome = "created" | "updated" | "unchanged" | "reactivated";
+type Outcome = "created" | "updated" | "unchanged" | "reactivated" | "duplicate";
 /** "warning": imported, but needs attention (e.g. missing or incomplete description). */
 type Detail = { postingId: string; kind: "skipped" | "error" | "warning"; message: string };
 
@@ -130,9 +142,22 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
     return { ok: true, value: await recordSkipped(prisma, board, startedAt, options) };
   }
 
-  const counts = { fetched: 0, created: 0, updated: 0, unchanged: 0, reactivated: 0, missing: 0, closed: 0, skipped: 0, errorCount: 0 };
+  /**
+   * Accounting (docs/ats-sync.md). Primary dispositions — each fetched posting
+   * lands in exactly one, so they always sum to `fetched`:
+   *   created + updated + unchanged + reactivated + duplicate
+   *   + filteredLocation + filteredEmploymentType + ingestErrors
+   * `skipped` = filteredLocation + filteredEmploymentType (kept for older runs).
+   * Secondary diagnostics (overlap the above): missing, closed (inactivated),
+   * enrichmentIncomplete. `invalid` items were never fetched as postings.
+   */
+  const counts = {
+    fetched: 0, created: 0, updated: 0, unchanged: 0, reactivated: 0, duplicate: 0,
+    filteredLocation: 0, filteredEmploymentType: 0, ingestErrors: 0,
+    eligible: 0, skipped: 0, invalid: 0, enrichmentIncomplete: 0,
+    missing: 0, closed: 0, errorCount: 0,
+  };
   let complete = false;
-  let ingestErrors = 0;
   const details: Detail[] = [];
   const toEvaluate = new Set<string>();
 
@@ -199,9 +224,22 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
   try {
     // --- 2. Fetch
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(SYNC_TIMEOUT_MS)]) : AbortSignal.timeout(SYNC_TIMEOUT_MS);
-    const result = await adapter.fetchPostings(board.boardToken, { transport: options.transport, signal });
+    const result = await adapter.fetchPostings(board.boardToken, {
+      transport: options.transport,
+      signal,
+      region: board.region === "eu" ? "eu" : null,
+      enrichedPostingIds: await enrichedPostingIds(prisma, provider, board.boardToken),
+    });
     counts.fetched = result.postings.length;
+    counts.invalid = result.invalidItems ?? 0;
     complete = result.complete;
+    if (result.enrichmentDeferred) {
+      details.push({
+        postingId: "",
+        kind: "warning",
+        message: `Descriptions for ${result.enrichmentDeferred} posting${result.enrichmentDeferred === 1 ? "" : "s"} were deferred by the per-sync request limit; stored descriptions are kept and they are enriched in later syncs.`,
+      });
+    }
     for (const w of result.warnings) {
       counts.errorCount++;
       details.push({ postingId: "", kind: "error", message: w });
@@ -216,27 +254,31 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
       try {
         if (!normalized.ok) {
           counts.skipped++;
+          if (normalized.category === "location") counts.filteredLocation++;
+          else counts.filteredEmploymentType++;
           details.push({ postingId: posting.postingId, kind: "skipped", message: normalized.reason });
           await touchIfKnown(prisma, provider, board.boardToken, posting.postingId, now());
           continue;
         }
         const outcome = await ingestPosting(prisma, { boardId, provider, boardToken: board.boardToken, posting, job: normalized.job, now: now() });
         counts[outcome.outcome]++;
+        counts.eligible++;
         // Imported, but not silently treated as complete: later tailoring depends on the full text.
-        const description = assessDescription(normalized.job.description);
+        const description = assessDescription(outcome.description);
+        if (description.status !== "complete") counts.enrichmentIncomplete++;
         if (description.status !== "complete" && outcome.outcome !== "unchanged") {
           details.push({ postingId: posting.postingId, kind: "warning", message: `${normalized.job.title}: ${description.message}` });
         }
         if (outcome.evaluate) toEvaluate.add(outcome.jobId);
       } catch (error) {
         counts.errorCount++;
-        ingestErrors++;
+        counts.ingestErrors++;
         details.push({ postingId: posting.postingId, kind: "error", message: error instanceof Error ? error.message.slice(0, 300) : "Unknown error" });
       }
     }
 
     // --- 4. Reconcile absences — only for a complete snapshot that was fully ingested.
-    const reliable = complete && ingestErrors === 0;
+    const reliable = complete && counts.ingestErrors === 0;
     if (reliable) {
       const missing = await reconcileMissing(prisma, { provider, boardToken: board.boardToken, seen, now: now() });
       counts.missing = missing.missing;
@@ -251,7 +293,7 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
     if (reliable) return { ok: true, value: await finish("succeeded", null) };
     const why = !complete
       ? (result.incompleteReason ?? "The provider catalogue could not be confirmed complete.")
-      : `${ingestErrors} posting${ingestErrors === 1 ? "" : "s"} could not be saved.`;
+      : `${counts.ingestErrors} posting${counts.ingestErrors === 1 ? "" : "s"} could not be saved.`;
     return { ok: true, value: await finish("partial", { code: "incomplete", message: `${why} No postings were marked missing or inactive.` }) };
   } catch (error) {
     const code = error instanceof AtsError ? error.code : "unexpected";
@@ -301,9 +343,20 @@ async function recordSkipped(
   ]);
   return {
     runId: run.id, trigger: "scheduled", status: "skipped", complete: false,
-    fetched: 0, created: 0, updated: 0, unchanged: 0, reactivated: 0, missing: 0, closed: 0, skipped: 0, errorCount: 0,
+    fetched: 0, created: 0, updated: 0, unchanged: 0, reactivated: 0, duplicate: 0,
+    filteredLocation: 0, filteredEmploymentType: 0, ingestErrors: 0, eligible: 0, skipped: 0, invalid: 0, enrichmentIncomplete: 0,
+    missing: 0, closed: 0, errorCount: 0,
     durationMs: 0, errorMessage: message,
   };
+}
+
+/** Posting ids of this board whose jobs already have a stored description. */
+async function enrichedPostingIds(prisma: PrismaClient, provider: AtsProvider, boardToken: string): Promise<Set<string>> {
+  const rows = await prisma.sourceObservation.findMany({
+    where: { atsProvider: provider, atsBoardToken: boardToken, job: { description: { not: null } } },
+    select: { atsPostingId: true },
+  });
+  return new Set(rows.map((r) => r.atsPostingId).filter((id): id is string => !!id));
 }
 
 const identity = (provider: AtsProvider, boardToken: string, postingId: string) => ({
@@ -328,8 +381,9 @@ interface IngestInput {
 export async function ingestPosting(
   prisma: PrismaClient,
   input: IngestInput,
-): Promise<{ outcome: Outcome; jobId: string; evaluate: boolean }> {
-  const { provider, boardToken, posting, job, now } = input;
+): Promise<{ outcome: Outcome; jobId: string; evaluate: boolean; description: string | null }> {
+  const { provider, boardToken, posting, now } = input;
+  let job = input.job;
   const id = identity(provider, boardToken, posting.postingId);
   const canonicalUrl = job.url ? safeCanonical(job.url) : null;
   const observationFields = {
@@ -339,12 +393,12 @@ export async function ingestPosting(
     payload: { provider, metadata: posting.metadata, employmentType: posting.employmentType, department: posting.department, normalization: job.notes } as Prisma.InputJsonObject,
     providerPublishedAt: posting.publishedAt ? new Date(posting.publishedAt) : null,
     publishedAtKind: posting.publishedAt ? posting.publishedAtKind : "none",
-    contentHash: job.contentHash,
+    contentHash: input.job.contentHash,
     // Listed now: active, absence counter reset.
     closedAt: null,
     missingCount: 0,
     lastSeenAt: now,
-  } as const;
+  };
 
   return prisma.$transaction(
     async (tx) => {
@@ -356,6 +410,17 @@ export async function ingestPosting(
 
       // --- Known posting
       if (existing) {
+        if (posting.descriptionFetched === false && existing.job.description) {
+          // Description not loaded this run (request cap): normalise the posting
+          // again WITH the stored description, so every derived field (term,
+          // duration, summary) and the content hash match a fully enriched run —
+          // nothing is blanked and nothing flips back and forth between runs.
+          const renormalized = normalizePosting({ ...posting, descriptionText: existing.job.description, descriptionFetched: true }, job.company);
+          if (renormalized.ok) {
+            job = renormalized.job;
+            observationFields.contentHash = job.contentHash;
+          }
+        }
         const changed = existing.contentHash !== job.contentHash;
         await tx.sourceObservation.update({
           where: { id: existing.id },
@@ -370,10 +435,11 @@ export async function ingestPosting(
         const reopened = await reopenIfExpiredBySync(tx, existing.jobId, existing.job.discoveryStatus, provider, now);
         // Same identity as before; it was inactive and is listed again.
         const wasInactive = existing.closedAt !== null;
-        if (!changed) return { outcome: wasInactive ? ("reactivated" as const) : ("unchanged" as const), jobId: existing.jobId, evaluate: reopened };
+        const description = job.description ?? existing.job.description;
+        if (!changed) return { outcome: wasInactive ? ("reactivated" as const) : ("unchanged" as const), jobId: existing.jobId, evaluate: reopened, description };
         if (existing.job.origin === "automatic") {
           await applyProviderDetails(tx, existing.jobId, existing.job, job, provider, now);
-          return { outcome: wasInactive ? ("reactivated" as const) : ("updated" as const), jobId: existing.jobId, evaluate: true };
+          return { outcome: wasInactive ? ("reactivated" as const) : ("updated" as const), jobId: existing.jobId, evaluate: true, description };
         }
         // Manually added: keep the user's details; record that the source changed.
         await tx.jobEvent.create({
@@ -385,7 +451,7 @@ export async function ingestPosting(
             occurredAt: now,
           },
         });
-        return { outcome: wasInactive ? ("reactivated" as const) : ("updated" as const), jobId: existing.jobId, evaluate: reopened };
+        return { outcome: wasInactive ? ("reactivated" as const) : ("updated" as const), jobId: existing.jobId, evaluate: reopened, description };
       }
 
       // --- Same job seen elsewhere (canonical URL or company + title + location)
@@ -418,7 +484,8 @@ export async function ingestPosting(
             occurredAt: now,
           },
         });
-        return { outcome: "updated" as const, jobId: matchJobId, evaluate: false };
+        // Another sighting of a job already known from another source or URL.
+        return { outcome: "duplicate" as const, jobId: matchJobId, evaluate: false, description: job.description };
       }
 
       // --- New canonical job
@@ -459,7 +526,7 @@ export async function ingestPosting(
           },
         },
       });
-      return { outcome: "created" as const, jobId, evaluate: true };
+      return { outcome: "created" as const, jobId, evaluate: true, description: job.description };
     },
     { timeout: 30_000 },
   );

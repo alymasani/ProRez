@@ -22,7 +22,7 @@ test.describe("imported job description (database mode)", () => {
     await page.getByRole("button", { name: "Register board" }).click();
     await expect(page.getByText("Registered Aurora Lattice (Ashby).")).toBeVisible();
     await page.getByRole("button", { name: "Sync Aurora Lattice Ashby board now" }).click();
-    await expect(page.getByRole("main").getByRole("status")).toContainText("Synced Aurora Lattice: 1 published, 1 new");
+    await expect(page.getByRole("main").getByRole("status")).toContainText("Synced Aurora Lattice: 1 published, 1 eligible, 1 new");
 
     await page.goto("/jobs?q=Aurora+Lattice");
     await page.getByRole("link", { name: /Machine Learning Intern\/Co-op/ }).first().click();

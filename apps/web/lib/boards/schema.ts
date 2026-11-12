@@ -1,7 +1,7 @@
 /** Strict server-side parsing for employer-board mutations. */
 import { z } from "zod";
 import { ATS_PROVIDERS, type AtsProvider } from "../types";
-import { canonicalBoardUrl, isValidBoardToken, normalizeBoardToken } from "./board-url";
+import { canonicalBoardUrl, isValidBoardToken, normalizeBoardToken, type BoardRegion } from "./board-url";
 
 export const POLL_INTERVAL = { min: 15, max: 10_080, default: 360 } as const;
 
@@ -11,6 +11,8 @@ const boardInputSchema = z.strictObject({
   boardToken: z.string().transform(normalizeBoardToken),
   pollIntervalMinutes: z.number().int(),
   enabled: z.boolean(),
+  /** From "Fill from URL" (jobs.eu.lever.co); never inferred from the user's location. */
+  region: z.enum(["eu"]).nullable().optional(),
 });
 
 export type BoardInput = z.input<typeof boardInputSchema>;
@@ -22,6 +24,7 @@ export interface ParsedBoard {
   boardUrl: string;
   pollIntervalMinutes: number;
   enabled: boolean;
+  region?: BoardRegion | null;
 }
 
 export type BoardField = "provider" | "employerName" | "boardToken" | "pollIntervalMinutes";
@@ -53,5 +56,7 @@ export function parseBoardInput(input: unknown): ParseBoardResult {
   }
   if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors, formErrors: [] };
 
-  return { ok: true, board: { ...b, boardUrl: canonicalBoardUrl(b.provider, b.boardToken) } };
+  const region = b.provider === "lever" && b.region === "eu" ? "eu" : null;
+  if (b.region && !region) return { ok: false, fieldErrors: { provider: "Only Lever boards have a separate EU region." }, formErrors: [] };
+  return { ok: true, board: { ...b, region, boardUrl: canonicalBoardUrl(b.provider, b.boardToken, region) } };
 }

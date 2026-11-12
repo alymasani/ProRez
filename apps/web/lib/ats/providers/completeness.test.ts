@@ -102,3 +102,40 @@ describe("SmartRecruiters pagination and completeness", () => {
     expect(result).toMatchObject({ complete: false, incompleteReason: expect.stringMatching(/later pages were not read/) });
   });
 });
+
+describe("Lever EU region (Milestone 3C)", () => {
+  it("reads EU boards from api.eu.lever.co and US boards from api.lever.co", async () => {
+    const eu = `https://api.eu.lever.co/v0/postings/acme?mode=json&skip=0&limit=${LEVER_PAGE_SIZE}`;
+    const euRun = fakeTransport({ [eu]: [leverJob(1)] });
+    const result = await leverAdapter.fetchPostings("acme", { transport: euRun.transport, region: "eu" });
+    expect(euRun.requested).toEqual([eu]);
+    expect(result).toMatchObject({ complete: true });
+    const usRun = fakeTransport({ [lever(0)]: [leverJob(1)] });
+    await leverAdapter.fetchPostings("acme", { transport: usRun.transport });
+    expect(usRun.requested).toEqual([lever(0)]);
+  });
+});
+
+describe("SmartRecruiters description enrichment (Milestone 3C)", () => {
+  const caJob = (i: number) => ({ id: `${900000 + i}`, name: `Junior Developer ${i}`, location: { city: "Toronto", region: "ON", country: "ca" } });
+  it("enriches postings without stored descriptions first, caps requests, and flags the rest", async () => {
+    const jobs = Array.from({ length: 160 }, (_, i) => caJob(i));
+    const responses: Record<string, unknown> = {
+      [sr(0)]: { totalFound: 160, content: jobs.slice(0, 100) },
+      [sr(1)]: { totalFound: 160, content: jobs.slice(100) },
+    };
+    for (const j of jobs) responses[`https://api.smartrecruiters.com/v1/companies/acme/postings/${j.id}`] = { jobAd: { sections: { jobDescription: { title: "About", text: "<p>Desc</p>" } } } };
+    // The first 20 already have stored descriptions.
+    const enriched = new Set(jobs.slice(0, 20).map((j) => j.id));
+    const { transport, requested } = fakeTransport(responses);
+    const result = await smartRecruitersAdapter.fetchPostings("acme", { transport, enrichedPostingIds: enriched });
+    const detailCalls = requested.filter((u) => /postings\/9\d{5}$/.test(u));
+    expect(detailCalls).toHaveLength(150);
+    // All 140 un-enriched postings were fetched; only 10 refreshes fit under the cap.
+    for (const j of jobs.slice(20)) expect(detailCalls).toContain(`https://api.smartrecruiters.com/v1/companies/acme/postings/${j.id}`);
+    expect(result.enrichmentDeferred).toBe(10);
+    expect(result.complete).toBe(true); // enrichment never affects listing completeness
+    expect(result.postings.filter((p) => p.descriptionFetched === false)).toHaveLength(10);
+    expect(result.warnings).toEqual([]); // a deferred description is not an error
+  });
+});

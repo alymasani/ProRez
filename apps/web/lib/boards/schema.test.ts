@@ -14,8 +14,15 @@ describe("parseBoardInput", () => {
         boardUrl: "https://job-boards.greenhouse.io/acmeinc",
         pollIntervalMinutes: 360,
         enabled: true,
+        region: null,
       },
     });
+  });
+
+  it("keeps the Lever EU region from the board URL and rejects it for other providers", () => {
+    const eu = parseBoardInput({ ...valid, provider: "lever", region: "eu" });
+    expect(eu).toMatchObject({ ok: true, board: { region: "eu", boardUrl: "https://jobs.eu.lever.co/acmeinc" } });
+    expect(parseBoardInput({ ...valid, region: "eu" }).ok).toBe(false);
   });
 
   it("rejects non-ATS providers and unknown fields", () => {

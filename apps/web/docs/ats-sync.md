@@ -1,4 +1,4 @@
-# ATS board synchronization (Milestones 3A and 3B)
+# ATS board synchronization (Milestones 3A–3C)
 
 Boards in the employer-board registry (`/boards`) can be synchronized **manually** with **Sync now**. Nothing runs on a schedule.
 
@@ -59,6 +59,53 @@ Code: `lib/ats/providers/*`, shared contract `lib/ats/types.ts`.
 - **Failures:** a failed sync is recorded with an error code. Already-imported data is kept, the board's failure count increases, and the next successful sync resets it.
 - **Metrics:** each run records counts, duration, errors and skip reasons. Each sighting records first detected, last seen, provider publication time and its meaning, and closed time.
 
+## Run accounting (Milestone 3C)
+
+Every fetched posting gets exactly one **primary disposition**, so these always sum to `fetched` (this is tested):
+
+| Field | Meaning |
+|---|---|
+| `created` (new) | A new canonical job. |
+| `updated` | A known posting whose content changed. |
+| `unchanged` | A known posting with the same content. |
+| `reactivated` | A previously inactive posting that is listed again. |
+| `duplicate` | Eligible, but recorded as another sighting of a job already known from another source or URL. |
+| `filteredLocation` | Not a Canadian location: outside Canada, remote without Canada eligibility, or "Canada" with no province for a non-remote role. |
+| `filteredEmploymentType` | Not an internship, co-op, new-grad or junior role (senior, leadership or other roles). |
+| `ingestErrors` | Eligible, but could not be saved. |
+
+Derived and secondary diagnostics (these overlap the above):
+
+| Field | Meaning |
+|---|---|
+| `eligible` | `fetched − filteredLocation − filteredEmploymentType`. |
+| `skipped` | `filteredLocation + filteredEmploymentType`; kept for older runs. |
+| `invalid` | Provider items dropped as unreadable (no id or title). Not part of `fetched`; such items also make the snapshot incomplete. |
+| `enrichmentIncomplete` | Eligible postings with a missing or very short description. |
+| `missing` / `closed` | Absence tracking (`closed` = newly inactivated). |
+
+Filters are about what you see, not about whether a posting still exists. A posting that becomes filtered, for example retitled as a senior role, is still *listed*, so it is never counted missing or expired.
+
+**Why so many postings are "skipped".** Live boards mostly list roles outside ProRez's scope. In November 2026:
+- *Cohere* (121 postings): 2 eligible, 72 not entry-level, 43 outside Canada, 4 "Canada" without a province.
+- *StackAdapt* (67 postings): 0 eligible, 28 outside Canada, 33 "Canada"/"Canada; United States" without a province or workplace type, 6 not entry-level.
+
+None of the "Canada without a province" postings were entry-level, but see the limitation in the 3C report.
+
+## Description enrichment (SmartRecruiters)
+
+SmartRecruiters lists postings without descriptions, so each Canadian posting needs one detail request. This is capped at **150 per sync**, which keeps the request rate within the documented limit:
+- Postings with no stored description are enriched first, then refreshes, so capped runs resume where the last one stopped.
+- A posting whose description was deferred keeps its stored description. Its content hash is computed *with* that description, so nothing is blanked and nothing flips between "changed" and "unchanged".
+- Deferrals are reported as a run warning, not as errors. New postings without a description count as `enrichmentIncomplete` until enriched.
+- Enrichment never affects listing completeness: missing-posting detection depends only on the listing.
+
+## Lever EU
+
+Lever boards hosted in the EU (`jobs.eu.lever.co`) are read from `api.eu.lever.co`. The region is taken from the board URL ("Fill from URL" and discovery), never from your location. It is stored as `employer_boards.region = 'eu'`. Board token uniqueness is per provider, so a US and an EU board with the same token cannot both be registered.
+
+Greenhouse's `job-boards.eu.greenhouse.io` URLs are recognised but read from the default Greenhouse API; a board that is EU-only fails verification there.
+
 ## Automatic synchronization (Milestone 3B)
 
 A separate worker process syncs enabled boards on a schedule. It never runs inside the web server or an HTTP request.
@@ -68,7 +115,24 @@ npm run worker            # run continuously (Ctrl+C or SIGTERM stops it gracefu
 npm run worker -- --once  # sync every board that is due now, then exit (cron-friendly)
 ```
 
-Start it next to the web app (`npm run dev` or `npm start`) with the same `.env`. It needs `PROREZ_DATA_SOURCE=database` and PostgreSQL. Running several copies is safe.
+Start it next to the web app with the same `.env`. It needs `PROREZ_DATA_SOURCE=database` and PostgreSQL. Running several copies is safe.
+
+**Development:** `npm run dev:all` starts `next dev` and the worker as two child processes, with output prefixed `[web]` and `[worker]`. Ctrl+C stops both, including all their descendants. If either exits, the other is stopped too, so no worker is left behind. The worker is never started inside Next.js, so hot reload cannot create a second one. `npm run dev`, `npm run worker` and `npm run worker -- --once` are unchanged.
+
+**Production:** run the worker as its own supervised service with restart-on-failure, next to `npm start`. ProRez does not ship deployment files; use your platform's supervisor. For example, with systemd:
+
+```ini
+# /etc/systemd/system/prorez-worker.service
+[Service]
+WorkingDirectory=/srv/prorez/apps/web
+ExecStart=/usr/bin/npm run worker
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=45
+```
+
+Equivalents: a macOS LaunchAgent with `KeepAlive`, Windows Task Scheduler or a service wrapper running `npm run worker`, or a container with `restart: unless-stopped`. The worker stops cleanly on SIGTERM (it waits up to 30 s for running syncs). If it is killed outright, leases expire, so a restart never loses or duplicates work.
 
 **Scheduling state lives in PostgreSQL** (`employer_boards`), so restarts lose nothing:
 

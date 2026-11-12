@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
+    "dev:all": "node scripts/dev-all.mjs",
     "build": "next build",
     "start": "next start -H 127.0.0.1",
     "worker": "tsx scripts/sync-worker.ts",
+    "discovery": "tsx scripts/discovery.ts",
     "lint": "eslint",
     "test": "vitest run",
     "test:e2e": "playwright test",

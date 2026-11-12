@@ -29,12 +29,26 @@ export interface ProviderPosting {
   publishedAtKind: PublishedAtKind;
   /** Original provider metadata worth keeping (bounded; descriptions excluded). */
   metadata: Record<string, unknown>;
+  /**
+   * False when the provider needs a separate request for the description and it
+   * was not made this run (request cap or failure). The stored description is
+   * then kept and the posting is not treated as changed. Default true.
+   */
+  descriptionFetched?: boolean;
 }
 
 export interface FetchOptions {
   transport: HttpTransport;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Board data region from the stored board (Lever "eu"); never inferred from the user. */
+  region?: "eu" | null;
+  /**
+   * Posting ids whose descriptions are already stored. Adapters that fetch
+   * descriptions per posting (SmartRecruiters) enrich the others first, so a
+   * capped run resumes where the previous one stopped.
+   */
+  enrichedPostingIds?: ReadonlySet<string>;
 }
 
 export interface FetchResult {
@@ -51,6 +65,10 @@ export interface FetchResult {
   complete: boolean;
   /** Why the catalogue is not provably complete (null when complete). */
   incompleteReason: string | null;
+  /** Provider items dropped as unreadable (no id/title); not in `postings`. */
+  invalidItems?: number;
+  /** Postings whose description was deliberately not loaded this run (request cap). */
+  enrichmentDeferred?: number;
 }
 
 /** Builds the completeness fields: any reason makes the snapshot incomplete. */

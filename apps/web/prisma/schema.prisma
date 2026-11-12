@@ -881,17 +881,26 @@ model EmployerBoard {
   /// Worker lease: which worker claimed the board and until when (crash recovery).
   syncLeaseOwner      String?        @map("sync_lease_owner")
   syncLeaseExpiresAt  DateTime?      @map("sync_lease_expires_at") @db.Timestamptz(3)
+  /// Provider data region; only Lever "eu" (jobs.eu.lever.co / api.eu.lever.co) today. Null = default region.
+  region              String?
+  /// How the board was added: by the user, or by automatic discovery (Milestone 3C).
+  origin              BoardOrigin    @default(manual)
+  /// Employer this board belongs to, when established (discovery sets it from verified evidence).
+  companyId           String?        @map("company_id") @db.Uuid
   isDemo              Boolean        @default(false) @map("is_demo")
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   source       JobSource           @relation(fields: [provider], references: [provider], onDelete: Restrict)
+  company      Company?            @relation(fields: [companyId], references: [id], onDelete: SetNull)
   observations SourceObservation[]
   syncRuns     BoardSyncRun[]
+  discovery    DiscoveryCandidate?
 
   @@unique([provider, boardToken])
   @@index([enabled, lastCheckedAt])
   @@index([nextSyncAt])
+  @@index([companyId])
   @@map("employer_boards")
 }
 
@@ -980,8 +989,21 @@ model BoardSyncRun {
   missing      Int           @default(0)
   /// Whether the provider returned a provably complete catalogue (null while running).
   complete     Boolean?
-  /// Not Canadian, or not an internship / co-op / new-grad / junior role.
+  /// Not Canadian, or not an internship / co-op / new-grad / junior role
+  /// (= filteredLocation + filteredEmploymentType; kept for older runs and the UI).
   skipped      Int           @default(0)
+  /// Postings that passed the Canadian location and employment-type filters.
+  eligible               Int @default(0)
+  filteredLocation       Int @default(0) @map("filtered_location")
+  filteredEmploymentType Int @default(0) @map("filtered_employment_type")
+  /// Eligible postings recorded as another sighting of a job already known from another source.
+  duplicate              Int @default(0)
+  /// Provider items dropped as unreadable (no id/title); NOT included in `fetched`.
+  invalid                Int @default(0)
+  /// Eligible postings that could not be saved.
+  ingestErrors           Int @default(0) @map("ingest_errors")
+  /// Secondary diagnostic: eligible postings whose description is missing or incomplete.
+  enrichmentIncomplete   Int @default(0) @map("enrichment_incomplete")
   errorCount   Int           @default(0) @map("error_count")
   errorCode    String?       @map("error_code")
   errorMessage String?       @map("error_message")
@@ -992,4 +1014,211 @@ model BoardSyncRun {
 
   @@index([boardId, startedAt(sort: Desc)])
   @@map("board_sync_runs")
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 3C: companies and automatic board discovery
+// ---------------------------------------------------------------------------
+
+enum BoardOrigin {
+  manual
+  discovered
+
+  @@map("board_origin")
+}
+
+/// An employer. Identified by its VERIFIED website domain when known; companies
+/// are never merged by name similarity.
+model Company {
+  id        String        @id @default(uuid()) @db.Uuid
+  name      String
+  /// Lowercase host without "www.", set only from verified ownership evidence.
+  domain    String?       @unique
+  origin    BoardOrigin   @default(discovered)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  boards EmployerBoard[]
+
+  @@map("companies")
+}
+
+enum DiscoveryCandidateStatus {
+  discovered
+  validating
+  verified
+  pending_review
+  rejected
+  registered
+
+  @@map("discovery_candidate_status")
+}
+
+enum DiscoverySource {
+  search
+  common_crawl
+  existing_jobs
+  manual
+
+  @@map("discovery_source")
+}
+
+enum DiscoveryEvidenceType {
+  /// The provider's public API returned a valid board.
+  ats_board_response
+  /// The company's website links to this board (ownership evidence).
+  official_site_link
+  /// The company's careers page redirects to this board (ownership evidence).
+  official_site_redirect
+  /// A search query surfaced the board (never ownership evidence; no result content stored).
+  search_result
+  /// A Common Crawl URL-index row (historical; never ownership evidence).
+  common_crawl
+  /// A job the user saved points at this board (never ownership evidence).
+  existing_job_url
+  /// The board was already registered.
+  existing_board
+  /// A person approved or rejected the candidate.
+  manual_review
+
+  @@map("discovery_evidence_type")
+}
+
+enum DiscoveryEvidenceStatus {
+  validated
+  unvalidated
+  failed
+
+  @@map("discovery_evidence_status")
+}
+
+/// One possible ATS board, unique by (provider, board token).
+model DiscoveryCandidate {
+  id                String                   @id @default(uuid()) @db.Uuid
+  provider          SourceProvider
+  /// Lowercase board identifier (lib/boards/board-url.ts).
+  boardToken        String                   @map("board_token")
+  region            String?
+  /// Canonical public board URL.
+  boardUrl          String                   @map("board_url")
+  companyName       String?                  @map("company_name")
+  /// Candidate website domain; trusted only when an ownership evidence row is validated.
+  companyDomain     String?                  @map("company_domain")
+  /// URL as first observed (canonical board URL for search results, which are not stored).
+  discoveredUrl     String                   @map("discovered_url")
+  source            DiscoverySource
+  status            DiscoveryCandidateStatus @default(discovered)
+  statusReason      String?                  @map("status_reason")
+  /// Verification attempts that ended in a temporary failure (bounded retries).
+  attempts          Int                      @default(0)
+  nextAttemptAt     DateTime?                @map("next_attempt_at") @db.Timestamptz(3)
+  /// Lease while a worker verifies this candidate (crash recovery).
+  validatingUntil   DateTime?                @map("validating_until") @db.Timestamptz(3)
+  lastVerifiedAt    DateTime?                @map("last_verified_at") @db.Timestamptz(3)
+  /// Published postings when the board was last validated.
+  postingCount      Int?                     @map("posting_count")
+  firstDiscoveredAt DateTime                 @map("first_discovered_at") @db.Timestamptz(3)
+  lastDiscoveredAt  DateTime                 @map("last_discovered_at") @db.Timestamptz(3)
+  registeredBoardId String?                  @unique @map("registered_board_id") @db.Uuid
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  registeredBoard EmployerBoard?      @relation(fields: [registeredBoardId], references: [id], onDelete: SetNull)
+  evidence        DiscoveryEvidence[]
+
+  @@unique([provider, boardToken])
+  @@index([status, nextAttemptAt])
+  @@map("discovery_candidates")
+}
+
+model DiscoveryEvidence {
+  id          String                  @id @default(uuid()) @db.Uuid
+  candidateId String                  @map("candidate_id") @db.Uuid
+  type        DiscoveryEvidenceType
+  status      DiscoveryEvidenceStatus
+  sourceUrl   String?                 @map("source_url")
+  /// Deduplicates repeated observations of the same evidence.
+  dedupeKey   String                  @map("dedupe_key")
+  observedAt  DateTime                @map("observed_at") @db.Timestamptz(3)
+  /// Small extracted facts (never search-result titles or snippets).
+  metadata    Json?
+  createdAt   DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  candidate DiscoveryCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, dedupeKey])
+  @@map("discovery_evidence")
+}
+
+enum DiscoveryRunStatus {
+  running
+  succeeded
+  partial
+  failed
+
+  @@map("discovery_run_status")
+}
+
+model DiscoveryRun {
+  id               String             @id @default(uuid()) @db.Uuid
+  /// Sources this run collected from, e.g. "search,existing_jobs" or "common_crawl".
+  source           String
+  trigger          SyncTrigger
+  status           DiscoveryRunStatus @default(running)
+  startedAt        DateTime           @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt       DateTime?          @map("finished_at") @db.Timestamptz(3)
+  searchRequests   Int                @default(0) @map("search_requests")
+  searchProvider   String?            @map("search_provider")
+  searchCredits    Int                @default(0) @map("search_credits")
+  candidateUrls    Int                @default(0) @map("candidate_urls")
+  uniqueCandidates Int                @default(0) @map("unique_candidates")
+  newCandidates    Int                @default(0) @map("new_candidates")
+  validated        Int                @default(0)
+  registered       Int                @default(0)
+  pendingReview    Int                @default(0) @map("pending_review")
+  rejected         Int                @default(0)
+  apiErrors        Int                @default(0) @map("api_errors")
+  atsRequests      Int                @default(0) @map("ats_requests")
+  siteRequests     Int                @default(0) @map("site_requests")
+  errorMessage     String?            @map("error_message")
+  details          Json?
+
+  @@index([startedAt(sort: Desc)])
+  @@index([searchProvider, startedAt(sort: Desc)])
+  @@map("discovery_runs")
+}
+
+/// Evolving registry of search queries and how well each performs.
+model DiscoveryQuery {
+  id            String          @id @default(uuid()) @db.Uuid
+  provider      SourceProvider
+  category      String
+  text          String          @unique
+  runs          Int             @default(0)
+  results       Int             @default(0)
+  newCandidates Int             @default(0) @map("new_candidates")
+  verified      Int             @default(0)
+  requests      Int             @default(0)
+  /// Next result page offset (Brave allows 0–9).
+  nextOffset    Int             @default(0) @map("next_offset")
+  exhausted     Boolean         @default(false)
+  lastRunAt     DateTime?       @map("last_run_at") @db.Timestamptz(3)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([lastRunAt])
+  @@map("discovery_queries")
+}
+
+/// Single-row durable schedule + lease for discovery runs (same pattern as board sync).
+model DiscoverySchedule {
+  id             String    @id
+  nextRunAt      DateTime? @map("next_run_at") @db.Timestamptz(3)
+  leaseOwner     String?   @map("lease_owner")
+  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(3)
+  /// Set by "Run discovery now"; picked up by the worker.
+  requestedAt    DateTime? @map("requested_at") @db.Timestamptz(3)
+  lastRunId      String?   @map("last_run_id") @db.Uuid
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("discovery_schedule")
 }

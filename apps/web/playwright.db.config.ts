@@ -11,18 +11,22 @@ process.env.E2E_DATA_SOURCE = "database";
 /**
  * Runs the e2e suite with pages reading from — and writing to — PostgreSQL.
  * Uses the dedicated E2E_DATABASE_URL (name must end in `_e2e`), which is
- * rebuilt in global setup and re-seeded before each persistence test, so
- * development data is never touched. Prerequisite: `npm run db:up`.
+ * rebuilt and re-seeded before each persistence test, so development data is
+ * never touched. Prerequisite: `npm run db:up`.
+ *
+ * Order matters (Milestone 3C fix): Playwright starts `webServer` and polls it
+ * for readiness BEFORE globalSetup runs, so the e2e database is now rebuilt
+ * and migrated inside the webServer command, before `next start` — the first
+ * readiness request can no longer hit an un-migrated schema.
  */
 export default defineConfig({
   ...baseConfig,
   // Persistence tests share one database, so run one test at a time.
   workers: 1,
   fullyParallel: false,
-  globalSetup: "./e2e/db-global-setup.ts",
   use: { ...baseConfig.use, baseURL: BASE_URL },
   webServer: {
-    command: `npm run build && npx next start -H 127.0.0.1 -p ${PORT}`,
+    command: `npx tsx scripts/reset-e2e-db.ts && npm run build && npx next start -H 127.0.0.1 -p ${PORT}`,
     url: BASE_URL,
     reuseExistingServer: false,
     timeout: 180_000,

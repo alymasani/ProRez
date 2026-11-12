@@ -16,7 +16,7 @@ test.describe("employer board sync", () => {
     await page.goto("/boards");
     await page.getByRole("button", { name: "Sync Northlight Robotics Greenhouse board now" }).click();
     const notice = page.getByRole("main").getByRole("status");
-    await expect(notice).toContainText("Synced Northlight Robotics: 3 published, 1 new, 0 changed, 0 unchanged, 0 reactivated, 0 missing, 0 inactivated, 2 skipped");
+    await expect(notice).toContainText("Synced Northlight Robotics: 3 published, 1 eligible, 1 new, 0 changed, 0 unchanged, 0 reactivated, 0 already known, 0 missing, 0 inactivated; not imported: 1 outside Canada, 1 not entry-level");
 
     const history = page.getByRole("list", { name: "Sync history" });
     await expect(history).toContainText("Northlight Robotics (Greenhouse)");
@@ -67,7 +67,7 @@ test.describe("employer board sync", () => {
 
     await page.reload();
     await syncNow.click();
-    await expect(page.getByRole("main").getByRole("status")).toContainText("Synced Harbourline: 3 published, 1 new");
+    await expect(page.getByRole("main").getByRole("status")).toContainText("Synced Harbourline: 3 published, 1 eligible, 1 new");
     await expect(page.getByRole("list", { name: "Sync history" })).toContainText("Harbourline (Greenhouse)");
   });
 

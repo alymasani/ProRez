@@ -391,6 +391,13 @@ export function toBoardSyncRun(row: Prisma.BoardSyncRunGetPayload<object>): Boar
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
     details: Array.isArray(row.details) ? (row.details as BoardSyncRun["details"]) : [],
+    eligible: row.eligible,
+    filteredLocation: row.filteredLocation,
+    filteredEmploymentType: row.filteredEmploymentType,
+    duplicate: row.duplicate,
+    invalid: row.invalid,
+    ingestErrors: row.ingestErrors,
+    enrichmentIncomplete: row.enrichmentIncomplete,
   };
 }
 
@@ -414,7 +421,7 @@ export function toJobSourceRecord(
 
 export function toEmployerBoard(
   row: Prisma.EmployerBoardGetPayload<object>,
-  live: { syncing?: boolean; activeJobCount?: number; now?: Date } = {},
+  live: { syncing?: boolean; activeJobCount?: number; now?: Date; companyDomain?: string | null } = {},
 ): EmployerBoard {
   const now = live.now ?? new Date();
   const leased = row.syncLeaseExpiresAt !== null && row.syncLeaseExpiresAt > now;
@@ -431,6 +438,9 @@ export function toEmployerBoard(
     syncing: (live.syncing ?? false) || leased,
     activeJobCount: live.activeJobCount ?? 0,
     lastErrorCode: row.lastErrorCode,
+    region: row.region === "eu" ? "eu" : null,
+    origin: row.origin,
+    companyDomain: live.companyDomain ?? null,
     lastCheckedAt: isoOrNull(row.lastCheckedAt),
     lastSuccessAt: isoOrNull(row.lastSuccessAt),
     consecutiveFailures: row.consecutiveFailures,

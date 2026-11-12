@@ -11,6 +11,8 @@ import { syncBoard, type SyncSummary } from "@/lib/ats/sync";
 import { getPrisma } from "@/lib/db/client";
 import { fail, type MutationResult } from "@/lib/mutations/result";
 import type { EmployerBoard } from "@/lib/types";
+import { approveCandidate, rejectCandidate, requeueCandidate } from "@/lib/discovery/register";
+import { requestDiscoveryRun } from "@/lib/discovery/run";
 
 const idSchema = z.uuid();
 
@@ -68,5 +70,48 @@ export async function syncBoardAction(id: unknown): Promise<MutationResult<SyncS
     const bid = idSchema.safeParse(id);
     if (!bid.success) return fail("validation", "Invalid request.");
     return syncBoard(getPrisma(), bid.data, { transport: resolveTransport() });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Discovery (Milestone 3C). Same local-only access rules. Discovery runs only
+// in the worker process; these actions record requests and review decisions.
+// ---------------------------------------------------------------------------
+
+/** Asks the worker to run discovery as soon as it next checks (within its poll interval). */
+export async function requestDiscoveryRunAction(): Promise<MutationResult<{ requested: true }>> {
+  return run(async () => {
+    await requestDiscoveryRun(getPrisma());
+    return { ok: true, value: { requested: true } };
+  });
+}
+
+/** Approves a pending candidate after re-validating the board with its provider. */
+export async function approveCandidateAction(id: unknown, employerName: unknown): Promise<MutationResult<{ boardId: string; created: boolean }>> {
+  return run(async () => {
+    const cid = idSchema.safeParse(id);
+    const name = z.string().max(120).nullable().safeParse(employerName ?? null);
+    if (!cid.success || !name.success) return fail("validation", "Invalid request.");
+    return approveCandidate(getPrisma(), { candidateId: cid.data, employerName: name.data, transport: resolveTransport() });
+  });
+}
+
+export async function rejectCandidateAction(id: unknown, reason: unknown): Promise<MutationResult<{ id: string }>> {
+  return run(async () => {
+    const cid = idSchema.safeParse(id);
+    const why = z.string().max(300).safeParse(typeof reason === "string" ? reason.trim() : "");
+    if (!cid.success || !why.success) return fail("validation", "Invalid request.");
+    return rejectCandidate(getPrisma(), cid.data, why.data || "Rejected by you.");
+  });
+}
+
+/** Queues a candidate for verification again (performed by the worker's next discovery run). */
+export async function revalidateCandidateAction(id: unknown): Promise<MutationResult<{ id: string }>> {
+  return run(async () => {
+    const cid = idSchema.safeParse(id);
+    if (!cid.success) return fail("validation", "Invalid request.");
+    const result = await requeueCandidate(getPrisma(), cid.data);
+    if (result.ok) await requestDiscoveryRun(getPrisma());
+    return result;
   });
 }

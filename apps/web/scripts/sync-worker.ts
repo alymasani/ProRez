@@ -14,6 +14,7 @@ import { resolveTransport } from "../lib/ats/http";
 import { workerConfigFromEnv } from "../lib/ats/schedule";
 import { consoleLogger, drainDueBoards, newWorkerId, startWorker } from "../lib/ats/worker";
 import { resolveDataSource } from "../lib/repositories/source";
+import { discoveryDepsFromEnv } from "../lib/discovery/factory";
 
 async function main() {
   if (resolveDataSource(process.env) !== "database") {
@@ -23,7 +24,9 @@ async function main() {
   const prisma = createPrismaClient(process.env.DATABASE_URL ?? "");
   const transport = resolveTransport(process.env);
   const owner = newWorkerId();
-  const deps = { prisma, transport, config, owner, log: consoleLogger };
+  // Validates PROREZ_DISCOVERY_* at start-up; discovery runs only when enabled or requested.
+  const discovery = discoveryDepsFromEnv(prisma, process.env, consoleLogger);
+  const deps = { prisma, transport, config, owner, log: consoleLogger, discovery };
 
   if (process.argv.includes("--once")) {
     consoleLogger("worker_once", { owner });

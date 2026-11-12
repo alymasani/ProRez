@@ -304,7 +304,8 @@ describe("updates", () => {
     });
     const lever: AtsAdapter = { ...adapter, provider: "lever" };
     state.postings = [posting("00000000-aaaa", { url: "https://jobs.lever.co/acme/00000000-aaaa" })];
-    expect(ok(await syncBoard(db, other.id, options(lever)))).toMatchObject({ created: 0, updated: 1 });
+    // Milestone 3C accounting: another sighting of a known job is a "duplicate", not an update.
+    expect(ok(await syncBoard(db, other.id, options(lever)))).toMatchObject({ created: 0, updated: 0, duplicate: 1, eligible: 1 });
     expect(await db.jobPosting.count()).toBe(1);
     expect(await db.sourceObservation.count()).toBe(2);
   });

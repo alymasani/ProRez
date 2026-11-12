@@ -623,6 +623,14 @@ export interface BoardSyncRun {
   errorMessage: string | null;
   /** Skip reasons and per-posting errors (bounded). */
   details: { postingId: string; kind: "skipped" | "error" | "warning"; message: string }[];
+  /** Milestone 3C accounting (docs/ats-sync.md): primary dispositions sum to `fetched`. */
+  eligible: number;
+  filteredLocation: number;
+  filteredEmploymentType: number;
+  duplicate: number;
+  invalid: number;
+  ingestErrors: number;
+  enrichmentIncomplete: number;
 }
 
 /** Where and when a job was seen, with provider timing (job page). */
@@ -659,6 +667,12 @@ export interface EmployerBoard {
   syncing: boolean;
   /** Postings from this board currently listed (active sightings). */
   activeJobCount: number;
+  /** Lever "eu" boards use the EU API; null = default region. */
+  region: "eu" | null;
+  /** Added by the user, or registered by automatic discovery (Milestone 3C). */
+  origin: "manual" | "discovered";
+  /** Verified company website domain, when the board belongs to a known company. */
+  companyDomain: string | null;
   lastErrorCode: string | null;
   lastCheckedAt: IsoDateTime | null;
   lastSuccessAt: IsoDateTime | null;

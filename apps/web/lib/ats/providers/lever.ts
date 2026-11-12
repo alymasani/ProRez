@@ -6,7 +6,8 @@
  * (on-site | remote | hybrid | unspecified), `categories.commitment`.
  * No documented publication timestamp (an undocumented `createdAt` is kept in
  * metadata only), so no latency is claimed.
- * Limitation: EU-hosted accounts (api.eu.lever.co) are not supported yet.
+ * EU-hosted accounts use https://api.eu.lever.co (board URL jobs.eu.lever.co);
+ * the region comes from the registered board, never from the user's location.
  */
 import { htmlToText } from "../html";
 import { AtsError } from "../http";
@@ -22,14 +23,16 @@ const WORKPLACE: Record<string, WorkArrangement> = { "on-site": "onsite", onsite
 export const leverAdapter: AtsAdapter = {
   provider: "lever",
   documentation: "https://github.com/lever/postings-api",
-  async fetchPostings(boardToken, { transport, signal, timeoutMs }) {
+  async fetchPostings(boardToken, { transport, signal, timeoutMs, region }) {
     const site = boardPath(boardToken);
+    // EU-hosted Lever accounts are served from api.eu.lever.co (taken from the board URL).
+    const apiHost = region === "eu" ? "api.eu.lever.co" : "api.lever.co";
     const postings: ProviderPosting[] = [];
     const warnings: string[] = [];
     let requests = 0;
     let malformed = 0;
     for (let page = 0; page < LEVER_MAX_PAGES; page++) {
-      const url = `https://api.lever.co/v0/postings/${site}?mode=json&skip=${page * LEVER_PAGE_SIZE}&limit=${LEVER_PAGE_SIZE}`;
+      const url = `https://${apiHost}/v0/postings/${site}?mode=json&skip=${page * LEVER_PAGE_SIZE}&limit=${LEVER_PAGE_SIZE}`;
       const data = await transport.getJson(url, { signal, timeoutMs });
       requests++;
       if (!Array.isArray(data)) throw new AtsError("invalid_response", "Lever response is not a list of postings.");
@@ -86,10 +89,10 @@ export const leverAdapter: AtsAdapter = {
         });
       }
       // A short page is the end of the catalogue.
-      if (data.length < LEVER_PAGE_SIZE) return { postings, warnings, requests, ...completeness(MALFORMED_REASON(malformed)) };
+      if (data.length < LEVER_PAGE_SIZE) return { postings, warnings, requests, invalidItems: malformed, ...completeness(MALFORMED_REASON(malformed)) };
     }
     const truncated = `Stopped after ${LEVER_MAX_PAGES} pages (${LEVER_MAX_PAGES * LEVER_PAGE_SIZE} postings); later pages were not read.`;
     warnings.push(truncated);
-    return { postings, warnings, requests, ...completeness(MALFORMED_REASON(malformed), truncated) };
+    return { postings, warnings, requests, invalidItems: malformed, ...completeness(MALFORMED_REASON(malformed), truncated) };
   },
 };

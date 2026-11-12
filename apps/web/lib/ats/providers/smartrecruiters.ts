@@ -24,7 +24,7 @@ export const SR_MAX_DETAILS = 150;
 export const smartRecruitersAdapter: AtsAdapter = {
   provider: "smartrecruiters",
   documentation: "https://developers.smartrecruiters.com/docs/posting-api",
-  async fetchPostings(boardToken, { transport, signal, timeoutMs }) {
+  async fetchPostings(boardToken, { transport, signal, timeoutMs, enrichedPostingIds }) {
     const company = boardPath(boardToken);
     const base = `https://api.smartrecruiters.com/v1/companies/${company}/postings`;
     const items: Json[] = [];
@@ -53,8 +53,20 @@ export const smartRecruitersAdapter: AtsAdapter = {
     }
     let malformed = rawCount - items.length;
 
+    // Description enrichment (one request per posting) is capped at SR_MAX_DETAILS
+    // Canadian postings per run. Postings without a stored description go first,
+    // then refreshes, so capped runs resume where the last one stopped. This cap
+    // affects descriptions only — never listing completeness.
+    const canadianIds = items
+      .filter((item) => isObject(item.location) && str(item.location.country)?.toLowerCase() === "ca")
+      .map((item) => idString(item.id))
+      .filter((id): id is string => !!id);
+    const needsFirst = canadianIds.filter((id) => !enrichedPostingIds?.has(id.toLowerCase()));
+    const refresh = canadianIds.filter((id) => enrichedPostingIds?.has(id.toLowerCase()));
+    const toEnrich = new Set([...needsFirst, ...refresh].slice(0, SR_MAX_DETAILS));
+    const enrichmentDeferred = canadianIds.length - toEnrich.size;
+
     const postings: ProviderPosting[] = [];
-    let details = 0;
     for (const item of items) {
       const id = idString(item.id);
       const title = str(item.name);
@@ -72,19 +84,16 @@ export const smartRecruitersAdapter: AtsAdapter = {
 
       // Descriptions only for Canadian postings: avoids hundreds of irrelevant requests.
       let detail: Json | null = null;
-      if (country?.toLowerCase() === "ca") {
-        if (details < SR_MAX_DETAILS) {
-          try {
-            detail = expectObject(await transport.getJson(`${base}/${encodeURIComponent(id)}`, { signal, timeoutMs }), "posting");
-            requests++;
-            details++;
-          } catch (error) {
-            if (error instanceof AtsError && (error.code === "cancelled" || error.code === "rate_limited")) throw error;
-            warnings.push(`Could not load details for posting ${id}: ${error instanceof Error ? error.message : "error"}`);
-          }
-        } else if (details === SR_MAX_DETAILS) {
-          warnings.push(`Loaded details for the first ${SR_MAX_DETAILS} Canadian postings only.`);
-          details++;
+      let detailFailed = false;
+      if (toEnrich.has(id)) {
+        try {
+          detail = expectObject(await transport.getJson(`${base}/${encodeURIComponent(id)}`, { signal, timeoutMs }), "posting");
+          requests++;
+        } catch (error) {
+          if (error instanceof AtsError && (error.code === "cancelled" || error.code === "rate_limited")) throw error;
+          detailFailed = true;
+          requests++;
+          warnings.push(`Could not load details for posting ${id}: ${error instanceof Error ? error.message : "error"}`);
         }
       }
       const sections = detail && isObject(detail.jobAd) && isObject(detail.jobAd.sections) ? detail.jobAd.sections : {};
@@ -100,6 +109,8 @@ export const smartRecruitersAdapter: AtsAdapter = {
         title,
         url: safeUrl(detail?.postingUrl) ?? `https://jobs.smartrecruiters.com/${company}/${encodeURIComponent(id)}`,
         descriptionText: text,
+        // Canadian postings whose detail was not loaded this run keep their stored description.
+        descriptionFetched: country?.toLowerCase() !== "ca" || (detail !== null && !detailFailed),
         locationTexts: [[str(loc.city), str(loc.region), country].filter(Boolean).join(", ")].filter(Boolean),
         structuredLocations: structured,
         workplace,
@@ -124,6 +135,8 @@ export const smartRecruitersAdapter: AtsAdapter = {
       postings,
       warnings,
       requests,
+      invalidItems: malformed,
+      enrichmentDeferred,
       ...completeness(
         MALFORMED_REASON(malformed),
         !reachedEnd && `Stopped listing after ${SR_MAX_PAGES} pages; later pages were not read.`,

@@ -12,6 +12,8 @@ internships, co-ops, and new grad roles, and managing applications.
 ```bash
 npm run dev     # development server on http://127.0.0.1:3000 (loopback only)
 npm run worker  # background board-sync worker (database mode; run alongside the app)
+npm run dev:all # development: web app + worker together ([web]/[worker] output, Ctrl+C stops both)
+npm run discovery -- run|import <file>|status   # automatic board discovery (Milestone 3C)
 npm run build   # production build
 npm run lint    # ESLint
 npm test        # Vitest unit tests for pure logic in lib/
@@ -39,6 +41,10 @@ With the app in database mode, run `npm run worker` in a second terminal. It syn
 board at its check interval (default every 6 hours), retries temporary failures, and only marks a posting
 inactive after two consecutive complete syncs no longer list it. `npm run worker -- --once` syncs whatever
 is due and exits. Details and settings: [docs/ats-sync.md](docs/ats-sync.md#automatic-synchronization-milestone-3b).
+
+## Board discovery (Milestone 3C)
+
+The worker can also find new employer boards: from your saved jobs, Tavily Search (`TAVILY_API_KEY`, the default), optional Brave Search, or imported Common Crawl lists. It verifies each board with the provider, and registers it automatically only when the company's own website links to it; everything else waits for review on the Boards page. Enable scheduled discovery with `PROREZ_DISCOVERY_ENABLED=true`. Guide: [docs/discovery.md](docs/discovery.md).
 
 ## Structure
 

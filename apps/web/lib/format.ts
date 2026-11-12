@@ -33,7 +33,13 @@ export function formatDate(value: IsoDateTime | null | undefined): string {
 
 export function formatDateTime(value: IsoDateTime | null | undefined): string {
   if (!value) return "—";
-  return dateTimeFormatter.format(new Date(value));
+  // Assembled from parts: ICU builds differ between Node and browsers in the
+  // literals they insert (", " vs " at ", "p.m." vs "PM"), which would break
+  // hydration if we used format() directly.
+  const parts: Record<string, string> = {};
+  for (const part of dateTimeFormatter.formatToParts(new Date(value))) parts[part.type] = part.value;
+  const period = (parts.dayPeriod ?? "").replace(/\./g, "").toUpperCase();
+  return `${parts.month} ${parts.day}, ${parts.year}, ${parts.hour}:${parts.minute} ${period} ${parts.timeZoneName}`.replace(/\s+/g, " ").trim();
 }
 
 export function formatDuration(months: number | null): string {

@@ -36,7 +36,10 @@ export interface ImportedJob {
   };
 }
 
-export type NormalizeResult = { ok: true; job: ImportedJob } | { ok: false; reason: string };
+/** Why a posting was not imported: it is outside Canada, or not an entry-level role. */
+export type FilterCategory = "location" | "employment_type";
+
+export type NormalizeResult = { ok: true; job: ImportedJob } | { ok: false; reason: string; category: FilterCategory };
 
 export function normalizePosting(posting: ProviderPosting, employerName: string): NormalizeResult {
   const title = posting.title.replace(/\s+/g, " ").trim().slice(0, 200);
@@ -46,10 +49,10 @@ export function normalizePosting(posting: ProviderPosting, employerName: string)
     structured: posting.structuredLocations,
     workplace: posting.workplace,
   });
-  if (!canada.canadian) return { ok: false, reason: canada.reason };
+  if (!canada.canadian) return { ok: false, reason: canada.reason, category: "location" };
 
   const employment = classifyEmployment(title, posting.employmentType);
-  if (!employment.ok) return { ok: false, reason: employment.reason };
+  if (!employment.ok) return { ok: false, reason: employment.reason, category: "employment_type" };
 
   const raw = normalizeDescription(posting.descriptionText);
   const description = raw ? raw.slice(0, DESCRIPTION_MAX) : null;
@@ -74,7 +77,7 @@ export function normalizePosting(posting: ProviderPosting, employerName: string)
   return { ok: true, job: { ...job, contentHash: hashImported(job) } };
 }
 
-function hashImported(job: Omit<ImportedJob, "contentHash">): string {
+export function hashImported(job: Omit<ImportedJob, "contentHash">): string {
   const material = {
     company: job.company,
     title: job.title,

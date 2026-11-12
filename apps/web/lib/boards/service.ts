@@ -11,6 +11,15 @@ import type { ParsedBoard } from "./schema";
 
 const DUPLICATE = "This board is already registered.";
 
+/**
+ * The single scheduling rule for new and re-enabled boards (Milestone 3B):
+ * real, enabled boards are due immediately; disabled and demo boards are not
+ * scheduled. Discovery registration (lib/discovery/register.ts) uses it too.
+ */
+export function initialNextSyncAt(enabled: boolean, isDemo: boolean, now: Date = new Date()): Date | null {
+  return enabled && !isDemo ? now : null;
+}
+
 export async function createBoard(
   prisma: PrismaClient,
   board: ParsedBoard,
@@ -19,7 +28,7 @@ export async function createBoard(
   try {
     const isDemo = options.isDemo ?? false;
     const row = await prisma.employerBoard.create({
-      data: { ...board, isDemo, nextSyncAt: board.enabled && !isDemo ? new Date() : null },
+      data: { ...board, region: board.region ?? null, isDemo, nextSyncAt: initialNextSyncAt(board.enabled, isDemo) },
     });
     return { ok: true, value: toEmployerBoard(row) };
   } catch (error) {
@@ -39,7 +48,7 @@ export async function setBoardEnabled(
   // configuration error is resumed; disabling stops automatic syncs.
   const updated = await prisma.employerBoard.updateMany({
     where: { id },
-    data: { enabled, nextSyncAt: enabled && !current.isDemo ? new Date() : null },
+    data: { enabled, nextSyncAt: initialNextSyncAt(enabled, current.isDemo) },
   });
   if (updated.count === 0) return fail("not_found", "This board no longer exists.");
   return { ok: true, value: toEmployerBoard(await prisma.employerBoard.findUniqueOrThrow({ where: { id } })) };

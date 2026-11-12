@@ -6,6 +6,7 @@ import { createBoardAction, deleteBoardAction, setBoardEnabledAction, syncBoardA
 import { describedBy, Field } from "@/components/forms/field";
 import { EmptyState, PreviewNotice } from "@/components/states";
 import { DemoBadge, StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, NativeSelect } from "@/components/ui/input";
@@ -23,12 +24,13 @@ const POLL_OPTIONS = [60, 180, 360, 720, 1440];
 
 type Notice = { tone: "success" | "error"; text: string } | null;
 
-const EMPTY_FORM: { url: string; provider: AtsProvider; employerName: string; boardToken: string; pollIntervalMinutes: number } = {
+const EMPTY_FORM: { url: string; provider: AtsProvider; employerName: string; boardToken: string; pollIntervalMinutes: number; region: "eu" | null } = {
   url: "",
   provider: "greenhouse",
   employerName: "",
   boardToken: "",
   pollIntervalMinutes: POLL_INTERVAL.default,
+  region: null,
 };
 
 export function BoardsManager({
@@ -58,7 +60,7 @@ export function BoardsManager({
         setNotice({ tone: "error", text: `Sync of ${board.employerName} failed: ${result.value.errorMessage ?? "unknown error"} Imported postings were kept; you can retry.` });
       } else {
         const v = result.value;
-        const counts = `${v.fetched} published, ${v.created} new, ${v.updated} changed, ${v.unchanged} unchanged, ${v.reactivated} reactivated, ${v.missing} missing, ${v.closed} inactivated, ${v.skipped} skipped${v.errorCount ? `, ${v.errorCount} errors` : ""}`;
+        const counts = `${v.fetched} published, ${v.eligible} eligible, ${v.created} new, ${v.updated} changed, ${v.unchanged} unchanged, ${v.reactivated} reactivated, ${v.duplicate} already known, ${v.missing} missing, ${v.closed} inactivated; not imported: ${v.filteredLocation} outside Canada, ${v.filteredEmploymentType} not entry-level${v.errorCount ? `, ${v.errorCount} errors` : ""}`;
         setNotice(
           v.status === "partial"
             ? { tone: "error", text: `Synced ${board.employerName} partially: ${counts}. ${v.errorMessage ?? ""}`.trim() }
@@ -80,7 +82,8 @@ export function BoardsManager({
   const [urlHint, setUrlHint] = useState<string | null>(null);
 
   const token = form.boardToken.trim().toLowerCase();
-  const preview = token && isValidBoardToken(token) ? canonicalBoardUrl(form.provider, token) : null;
+  const region = form.provider === "lever" ? form.region : null;
+  const preview = token && isValidBoardToken(token) ? canonicalBoardUrl(form.provider, token, region) : null;
 
   function fillFromUrl() {
     const parsed = parseBoardUrl(form.url);
@@ -88,8 +91,8 @@ export function BoardsManager({
       setUrlHint("That doesn't look like a Greenhouse, Lever, Ashby or SmartRecruiters board URL.");
       return;
     }
-    setUrlHint(`Detected ${SOURCE_PROVIDER_LABELS[parsed.provider]} board “${parsed.boardToken}”.`);
-    setForm((f) => ({ ...f, provider: parsed.provider, boardToken: parsed.boardToken }));
+    setUrlHint(`Detected ${SOURCE_PROVIDER_LABELS[parsed.provider]}${parsed.region ? " (EU region)" : ""} board “${parsed.boardToken}”.`);
+    setForm((f) => ({ ...f, provider: parsed.provider, boardToken: parsed.boardToken, region: parsed.region ?? null }));
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -100,7 +103,7 @@ export function BoardsManager({
       const { url: _url, ...fields } = form;
       void _url;
       // New boards start enabled; they can be paused from the table.
-      const result = await createBoardAction({ ...fields, enabled: true });
+      const result = await createBoardAction({ ...fields, region: fields.provider === "lever" ? fields.region : null, enabled: true });
       if (result.ok) {
         setForm(EMPTY_FORM);
         setUrlHint(null);
@@ -186,7 +189,10 @@ export function BoardsManager({
                           <div className="flex flex-wrap items-center gap-1.5 font-medium">
                             {board.employerName}
                             <DemoBadge when={board.isDemo} />
+                            {board.origin === "discovered" ? <Badge variant="info">Discovered</Badge> : null}
+                            {board.region === "eu" ? <Badge variant="outline">EU</Badge> : null}
                           </div>
+                          {board.companyDomain ? <div className="text-xs text-muted-foreground">Verified site: {board.companyDomain}</div> : null}
                           <div className="text-xs text-muted-foreground">{SOURCE_PROVIDER_LABELS[board.provider]}</div>
                         </TableCell>
                         <TableCell className="min-w-56">
@@ -441,13 +447,23 @@ function RunSummary({ run }: { run: BoardSyncRun | null }) {
         <span>{run.trigger === "scheduled" ? "Automatic" : "Manual"}</span>
       </div>
       {run.status === "skipped" ? null : (
-        <div>
-          {run.fetched} published · {run.created} new · {run.updated} changed · {run.unchanged} unchanged
-          {run.reactivated > 0 ? ` · ${run.reactivated} reactivated` : ""}
-          {run.missing > 0 ? ` · ${run.missing} missing` : ""} · {run.closed} inactivated · {run.skipped} skipped
-          {run.errorCount > 0 ? ` · ${run.errorCount} error${run.errorCount === 1 ? "" : "s"}` : ""}
-          {duration ? ` · ${duration}` : ""}
-        </div>
+        <>
+          <div>
+            {run.fetched} published · {run.eligible} eligible · {run.created} new · {run.updated} changed · {run.unchanged} unchanged
+            {run.reactivated > 0 ? ` · ${run.reactivated} reactivated` : ""}
+            {run.duplicate > 0 ? ` · ${run.duplicate} already known` : ""}
+            {run.missing > 0 ? ` · ${run.missing} missing` : ""} · {run.closed} inactivated
+            {run.errorCount > 0 ? ` · ${run.errorCount} error${run.errorCount === 1 ? "" : "s"}` : ""}
+            {duration ? ` · ${duration}` : ""}
+          </div>
+          {run.skipped > 0 || run.invalid > 0 || run.enrichmentIncomplete > 0 ? (
+            <div>
+              Not imported: {run.filteredLocation} outside Canada · {run.filteredEmploymentType} not entry-level
+              {run.invalid > 0 ? ` · ${run.invalid} unreadable` : ""}
+              {run.enrichmentIncomplete > 0 ? ` · ${run.enrichmentIncomplete} with incomplete descriptions` : ""}
+            </div>
+          ) : null}
+        </>
       )}
       {run.errorMessage ? <div className={run.status === "failed" ? "text-destructive" : "text-amber-700 dark:text-amber-300"}>{run.errorMessage}</div> : null}
     </div>

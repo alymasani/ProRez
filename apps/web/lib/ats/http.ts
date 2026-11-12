@@ -16,6 +16,7 @@ import path from "node:path";
 export const ALLOWED_HOSTS = [
   "boards-api.greenhouse.io",
   "api.lever.co",
+  "api.eu.lever.co",
   "api.ashbyhq.com",
   "api.smartrecruiters.com",
 ] as const;
@@ -28,6 +29,7 @@ export type AtsErrorCode =
   | "invalid_board"
   | "not_found"
   | "rate_limited"
+  | "quota_exhausted"
   | "http_error"
   | "timeout"
   | "cancelled"
@@ -270,16 +272,18 @@ export function withRetries(
  * when PROREZ_ATS_TRANSPORT=fixtures AND the database is a test/e2e database,
  * so a misconfigured deployment can never silently serve fake jobs.
  */
+/** True when DATABASE_URL names a disposable *_e2e or *_test database (fixtures allowed). */
+export function isTestDatabase(env: Readonly<Record<string, string | undefined>>): boolean {
+  try {
+    return /_(e2e|test)$/.test(new URL(env.DATABASE_URL ?? "").pathname.slice(1));
+  } catch {
+    return false;
+  }
+}
+
 export function resolveTransport(env: Readonly<Record<string, string | undefined>> = process.env): HttpTransport {
   if (env.PROREZ_ATS_TRANSPORT === "fixtures") {
-    const dbName = (() => {
-      try {
-        return new URL(env.DATABASE_URL ?? "").pathname.slice(1);
-      } catch {
-        return "";
-      }
-    })();
-    if (!/_(e2e|test)$/.test(dbName)) {
+    if (!isTestDatabase(env)) {
       throw new Error("PROREZ_ATS_TRANSPORT=fixtures is only allowed against a *_e2e or *_test database.");
     }
     return createFixtureTransport(env.PROREZ_ATS_FIXTURE_DIR ?? path.join(process.cwd(), "e2e", "fixtures", "ats"));

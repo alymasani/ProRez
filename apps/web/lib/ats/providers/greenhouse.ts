@@ -64,6 +64,7 @@ export const greenhouseAdapter: AtsAdapter = {
       postings,
       warnings,
       requests: 1,
+      invalidItems: malformed,
       ...completeness(
         MALFORMED_REASON(malformed),
         total !== null && total !== jobs.length && `Greenhouse reported ${total} jobs but returned ${jobs.length}.`,
