@@ -130,8 +130,15 @@ export interface JobSource {
 
 export interface JobLocation {
   city: string;
-  province: Province;
+  /** Null only for remote roles open anywhere in Canada. */
+  province: Province | null;
   arrangement: WorkArrangement;
+  /**
+   * False when the source did not state the work arrangement and `arrangement`
+   * is only a display default. Matching treats it as unknown (needs review),
+   * never as a confirmed on-site role. Absent = stated.
+   */
+  arrangementStated?: false;
 }
 
 /** Discovery lifecycle — independent of preparation and submission. */
@@ -586,6 +593,55 @@ export interface JobProfileMatch {
 export const ATS_PROVIDERS = ["greenhouse", "lever", "ashby", "smartrecruiters"] as const;
 export type AtsProvider = (typeof ATS_PROVIDERS)[number];
 
+/** What a provider's publication timestamp means (only first_published supports latency). */
+export type PublishedAtKind = "none" | "first_published" | "last_published" | "updated";
+
+/** One synchronization of one employer board (Milestone 3A). */
+export interface BoardSyncRun {
+  id: string;
+  boardId: string;
+  /** partial: imported but the catalogue was incomplete (nothing expired); skipped: another sync was running. */
+  status: "running" | "succeeded" | "partial" | "failed" | "skipped";
+  trigger: "manual" | "scheduled";
+  /** Whether the provider catalogue was provably complete (null while running). */
+  complete: boolean | null;
+  startedAt: IsoDateTime;
+  finishedAt: IsoDateTime | null;
+  durationMs: number | null;
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  reactivated: number;
+  /** Active postings absent from this complete snapshot (not yet inactive). */
+  missing: number;
+  /** Newly inactivated postings (absent from two consecutive complete snapshots). */
+  closed: number;
+  skipped: number;
+  errorCount: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  /** Skip reasons and per-posting errors (bounded). */
+  details: { postingId: string; kind: "skipped" | "error" | "warning"; message: string }[];
+}
+
+/** Where and when a job was seen, with provider timing (job page). */
+export interface JobSourceRecord {
+  id: string;
+  provider: SourceProvider;
+  /** Employer board name, when the sighting came from a registered board. */
+  boardName: string | null;
+  postingId: string | null;
+  sourceUrl: string | null;
+  providerPublishedAt: IsoDateTime | null;
+  publishedAtKind: PublishedAtKind;
+  firstSeenAt: IsoDateTime;
+  lastSeenAt: IsoDateTime;
+  closedAt: IsoDateTime | null;
+  /** Publication → first detection, only when the provider reports a first-publication time. */
+  discoveryLatencyMs: number | null;
+}
+
 export interface EmployerBoard {
   id: string;
   provider: AtsProvider;
@@ -595,8 +651,15 @@ export interface EmployerBoard {
   /** Canonical public board URL derived from provider + token. */
   boardUrl: string;
   enabled: boolean;
-  /** Minutes between checks once polling exists. */
+  /** Minutes between automatic syncs (default 360 = 6 hours). */
   pollIntervalMinutes: number;
+  /** Next automatic sync; null when not scheduled (disabled, demo, or paused after a configuration error). */
+  nextSyncAt: IsoDateTime | null;
+  /** A sync is running now (worker lease held or a run in progress). */
+  syncing: boolean;
+  /** Postings from this board currently listed (active sightings). */
+  activeJobCount: number;
+  lastErrorCode: string | null;
   lastCheckedAt: IsoDateTime | null;
   lastSuccessAt: IsoDateTime | null;
   consecutiveFailures: number;

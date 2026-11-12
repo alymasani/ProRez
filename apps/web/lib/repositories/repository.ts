@@ -1,4 +1,6 @@
 import type {
+  BoardSyncRun,
+  JobSourceRecord,
   Application,
   ApplicationRun,
   ApprovalRequest,
@@ -51,6 +53,11 @@ export interface DataRepository {
 
   /** Ordered by employer name, then provider. */
   listEmployerBoards(): Promise<EmployerBoard[]>;
+
+  /** Most recent sync runs, newest first (at most `limit` per board). */
+  listBoardSyncRuns(limit?: number): Promise<BoardSyncRun[]>;
+  /** Sightings of a job, oldest first. */
+  listJobSightings(jobId: string): Promise<JobSourceRecord[]>;
 
   getDefaultPreferences(): Promise<SearchPreferences>;
 }

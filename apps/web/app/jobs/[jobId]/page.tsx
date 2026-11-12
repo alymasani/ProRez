@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import { JobDescription } from "@/components/jobs/job-description";
+import { assessDescription } from "@/lib/jobs/description";
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Check, ListFilter, Minus } from "lucide-react";
 import { FitScore } from "@/components/fit-score";
 import { FutureAction } from "@/components/future-action";
 import { PageHeader } from "@/components/page-header";
+import { DetailSkeleton } from "@/components/page-skeletons";
 import { JobManagement } from "@/components/jobs/job-management";
 import { PreviewNotice } from "@/components/states";
 import { DemoBadge, StatusBadge } from "@/components/status-badge";
@@ -13,12 +17,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getApplicationForJob,
+  getJobSightings,
   getJobSources,
   getJobWithMatch,
   getProfileMatchForJob,
   getSearchProfile,
 } from "@/lib/data";
 import { formatDate, formatDateTime, formatDuration, formatLocation } from "@/lib/format";
+import { formatLatency } from "@/lib/ats/metrics";
 import {
   ARRANGEMENT_LABELS,
   DISCIPLINE_LABELS,
@@ -47,16 +53,26 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
-export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]">) {
+export default function JobDetailPage({ params }: PageProps<"/jobs/[jobId]">) {
+  return (
+    <Suspense fallback={<DetailSkeleton label="Loading job…" />}>
+      <JobDetail params={params} />
+    </Suspense>
+  );
+}
+
+/** Everything on this page, including its title, comes from the job record. */
+async function JobDetail({ params }: { params: PageProps<"/jobs/[jobId]">["params"] }) {
   const { jobId } = await params;
   const item = await getJobWithMatch(jobId);
   if (!item) notFound();
 
   const { job, match } = item;
-  const [sources, application, profileMatch] = await Promise.all([
+  const [sources, application, profileMatch, sightings] = await Promise.all([
     getJobSources(),
     getApplicationForJob(job.id),
     getProfileMatchForJob(job.id),
+    getJobSightings(job.id),
   ]);
   const source = sources.find((s) => s.id === job.sourceId) ?? null;
   // Look up each matched profile individually so archived ones still resolve.
@@ -64,6 +80,8 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
     ? await Promise.all(profileMatch.entries.map((e) => getSearchProfile(e.profileId)))
     : [];
   const profilesById = new Map(matchedProfiles.filter((p) => p !== null).map((p) => [p.id, p]));
+  const descriptionCheck = assessDescription(job.description);
+  const originalPostingUrl = safeHttpUrl(job.postingUrl);
   const mutation = mutationsConfigured({ dataSource: resolveDataSource(process.env), localMutations: process.env.PROREZ_LOCAL_MUTATIONS });
 
   return (
@@ -93,10 +111,18 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
         }
       />
 
-      <PreviewNotice title="Demo posting — actions are not active yet">
-        This company and role are fictional. Full Build, Quick Apply, and Skip will start generation workflows in a
-        later milestone; nothing is generated or submitted from this page.
-      </PreviewNotice>
+      {/* Demo status comes from the record (isDemo), independent of which workflows exist yet. */}
+      {job.isDemo ? (
+        <PreviewNotice title="Demo posting — actions are not active yet">
+          This company and role are fictional. Full Build, Quick Apply, and Skip will start generation workflows in a
+          later milestone; nothing is generated or submitted from this page.
+        </PreviewNotice>
+      ) : (
+        <PreviewNotice title="Application workflows are not available yet">
+          Full Build, Quick Apply, and Skip arrive in a later milestone; nothing is generated or submitted from this page.
+          {job.postingUrl ? " To apply now, use the original posting." : null}
+        </PreviewNotice>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -106,25 +132,43 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
               <CardTitle>About the role</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <p className="text-sm leading-relaxed">{job.summary}</p>
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                <section>
-                  <h3 className="mb-2 text-sm font-medium">Responsibilities</h3>
-                  <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
-                    {job.responsibilities.map((r) => (
-                      <li key={r}>{r}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h3 className="mb-2 text-sm font-medium">Qualifications</h3>
-                  <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
-                    {job.qualifications.map((q) => (
-                      <li key={q}>{q}</li>
-                    ))}
-                  </ul>
-                </section>
-              </div>
+              {descriptionCheck.message && !job.isDemo ? (
+                <p role="note" className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                  {descriptionCheck.message}
+                </p>
+              ) : null}
+              {/* The complete employer-provided text is the source of truth; the
+                  summary is derived from it, so it is only shown when there is no text. */}
+              {job.description ? (
+                <JobDescription text={job.description} />
+              ) : job.summary ? (
+                <p className="text-sm leading-relaxed">{job.summary}</p>
+              ) : null}
+              {/* Structured sections exist only when the source supplied them; never render an empty heading. */}
+              {job.responsibilities.length > 0 || job.qualifications.length > 0 ? (
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {job.responsibilities.length > 0 ? (
+                    <section>
+                      <h3 className="mb-2 text-sm font-medium">Responsibilities</h3>
+                      <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
+                        {job.responsibilities.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                  {job.qualifications.length > 0 ? (
+                    <section>
+                      <h3 className="mb-2 text-sm font-medium">Qualifications</h3>
+                      <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
+                        {job.qualifications.map((q) => (
+                          <li key={q}>{q}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -154,16 +198,77 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
                   <time dateTime={job.discoveredAt}>{formatDateTime(job.discoveredAt)}</time>
                 </Detail>
                 <Detail label="Posting URL">
-                  {job.postingUrl ? (
+                  {job.postingUrl && job.isDemo ? (
                     <span className="block break-all font-mono text-xs text-muted-foreground">
                       {job.postingUrl}
                       <span className="mt-0.5 block font-sans">Placeholder address — not a real listing.</span>
                     </span>
+                  ) : originalPostingUrl ? (
+                    <a
+                      href={originalPostingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block break-all text-sm underline underline-offset-2"
+                    >
+                      View original posting{source ? ` on ${SOURCE_PROVIDER_LABELS[source.provider]}` : ""}
+                      <span className="sr-only"> (opens in a new tab)</span>
+                    </a>
                   ) : (
                     "—"
                   )}
                 </Detail>
               </dl>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Where this job was seen</CardTitle>
+              <CardDescription>
+                Every sighting of this posting. Discovery latency is shown only when the provider reports when the
+                posting was first published.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="divide-y rounded-lg border text-sm" aria-label="Job sightings">
+                {sightings.map((s) => (
+                  <li key={s.id} className="space-y-1 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {SOURCE_PROVIDER_LABELS[s.provider]}
+                        {s.boardName ? ` · ${s.boardName}` : ""}
+                      </span>
+                      {s.closedAt ? (
+                        <Badge variant="muted">No longer listed</Badge>
+                      ) : (
+                        <Badge variant="secondary">Listed</Badge>
+                      )}
+                    </div>
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
+                      <div>Posting id: <span className="font-mono">{s.postingId ?? "—"}</span></div>
+                      <div>
+                        Provider publication:{" "}
+                        {s.providerPublishedAt
+                          ? `${formatDateTime(s.providerPublishedAt)}${s.publishedAtKind === "first_published" ? "" : s.publishedAtKind === "last_published" ? " (last republished)" : " (last updated)"}`
+                          : "not reported"}
+                      </div>
+                      <div>First detected: {formatDateTime(s.firstSeenAt)}</div>
+                      <div>Last seen: {formatDateTime(s.lastSeenAt)}</div>
+                      <div>Discovery latency: {formatLatency(s.discoveryLatencyMs)}</div>
+                      {s.closedAt ? <div>Closed: {formatDateTime(s.closedAt)}</div> : null}
+                    </dl>
+                    {s.sourceUrl && /^https?:\/\//.test(s.sourceUrl) && !job.isDemo ? (
+                      <a
+                        href={s.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer nofollow"
+                        className="block break-all text-xs text-primary hover:underline"
+                      >
+                        {s.sourceUrl}
+                      </a>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             </CardContent>
           </Card>
         </div>
@@ -172,7 +277,13 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
           <Card>
             <CardHeader>
               <CardTitle>Candidate fit</CardTitle>
-              <CardDescription>Fictional score for demonstration — not computed by any model.</CardDescription>
+              <CardDescription>
+                {job.isDemo
+                  ? "Fictional score for demonstration — not computed by any model."
+                  : match
+                    ? "Candidate-fit score recorded for this job."
+                    : "Not scored yet — candidate-fit scoring arrives in a later milestone."}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <FitScore score={match?.fitScore ?? null} />
@@ -304,4 +415,15 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
       </div>
     </div>
   );
+}
+
+/** Only absolute http(s) links are rendered as clickable. */
+function safeHttpUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
 }

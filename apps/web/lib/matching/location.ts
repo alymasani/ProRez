@@ -26,21 +26,38 @@ export function checkLocation(
     return { result: "unknown", detail: "Posting does not state a location", matched: null };
   }
 
+  let unstatedCandidate: JobLocation | null = null;
   for (const location of locations) {
     const arrangementOk = arrangements.length === 0 || arrangements.includes(location.arrangement);
     const provinceOk =
       provinces.length === 0 ||
+      // No province = remote anywhere in Canada, which includes every selected province.
+      location.province === null ||
       provinces.includes(location.province) ||
       (includeRemoteCanadaWide && location.arrangement === "remote");
     if (arrangementOk && provinceOk) {
       return {
         result: "pass",
-        detail: `${location.city}, ${location.province} · ${ARRANGEMENT_LABELS[location.arrangement]}`,
+        detail: `${location.city}, ${location.province ?? "Canada"} · ${arrangementLabel(location)}`,
         matched: location,
       };
     }
+    // The province fits but the arrangement was never stated: it may well be
+    // remote or hybrid, so this is a question for review, not a rejection.
+    if (provinceOk && location.arrangementStated === false) unstatedCandidate ??= location;
   }
 
-  const listed = locations.map((l) => `${l.city}, ${l.province} (${ARRANGEMENT_LABELS[l.arrangement]})`).join("; ");
+  if (unstatedCandidate) {
+    return {
+      result: "unknown",
+      detail: `${unstatedCandidate.city}, ${unstatedCandidate.province ?? "Canada"} — work arrangement not stated — needs review`,
+      matched: null,
+    };
+  }
+
+  const listed = locations.map((l) => `${l.city}, ${l.province ?? "Canada"} (${arrangementLabel(l)})`).join("; ");
   return { result: "fail", detail: `No acceptable location: ${listed}`, matched: null };
 }
+
+const arrangementLabel = (l: JobLocation) =>
+  l.arrangementStated === false ? "arrangement not stated" : ARRANGEMENT_LABELS[l.arrangement];

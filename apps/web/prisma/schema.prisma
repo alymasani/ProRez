@@ -263,8 +263,11 @@ model JobLocation {
   /// Display order; 0 is the primary location.
   position    Int
   city        String
-  province    Province
+  /// Null only for remote roles open anywhere in Canada (CHECK in migration SQL).
+  province    Province?
   arrangement WorkArrangement
+  /// False when the source did not state the arrangement (matching: unknown).
+  arrangementStated Boolean @default(true) @map("arrangement_stated")
 
   job JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
@@ -275,27 +278,37 @@ model JobLocation {
 
 /// One sighting of a canonical job on one source.
 model SourceObservation {
-  id            String          @id @default(uuid()) @db.Uuid
-  jobId         String          @map("job_id")
-  sourceId      String          @map("source_id")
+  id                  String          @id @default(uuid()) @db.Uuid
+  jobId               String          @map("job_id")
+  sourceId            String          @map("source_id")
   /// Employer board the sighting came from (null for manual entries).
-  boardId       String?         @map("board_id") @db.Uuid
+  boardId             String?         @map("board_id") @db.Uuid
   /// The source's own identifier (null for manual entries).
-  externalId    String?         @map("external_id")
+  externalId          String?         @map("external_id")
   /// URL exactly as submitted or reported (never fetched).
-  sourceUrl     String?         @map("source_url")
+  sourceUrl           String?         @map("source_url")
   /// Normalized URL for duplicate detection (lib/jobs/url.ts). One job per URL.
-  canonicalUrl  String?         @unique @map("canonical_url")
+  canonicalUrl        String?         @unique @map("canonical_url")
   /// ATS posting identity parsed from the URL, when recognisable. All three or none.
-  atsProvider   SourceProvider? @map("ats_provider")
-  atsBoardToken String?         @map("ats_board_token")
-  atsPostingId  String?         @map("ats_posting_id")
-  rawTitle      String?         @map("raw_title")
+  atsProvider         SourceProvider? @map("ats_provider")
+  atsBoardToken       String?         @map("ats_board_token")
+  atsPostingId        String?         @map("ats_posting_id")
+  rawTitle            String?         @map("raw_title")
   /// Original payload for audit / re-parsing. Never rendered directly.
-  payload       Json?
-  firstSeenAt   DateTime        @map("first_seen_at") @db.Timestamptz(3)
-  lastSeenAt    DateTime        @map("last_seen_at") @db.Timestamptz(3)
-  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  payload             Json?
+  /// Publication time reported by the provider, and what that field actually means.
+  providerPublishedAt DateTime?       @map("provider_published_at") @db.Timestamptz(3)
+  publishedAtKind     PublishedAtKind @default(none) @map("published_at_kind")
+  /// SHA-256 of the normalized posting; a change means the posting materially changed.
+  contentHash         String?         @map("content_hash")
+  /// Inactivation time: set after the posting is absent from two consecutive
+  /// complete, successful board syncs. Null = active.
+  closedAt            DateTime?       @map("closed_at") @db.Timestamptz(3)
+  /// Consecutive complete snapshots in which the posting was absent.
+  missingCount        Int             @default(0) @map("missing_count")
+  firstSeenAt         DateTime        @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt          DateTime        @map("last_seen_at") @db.Timestamptz(3)
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
   job    JobPosting     @relation(fields: [jobId], references: [id], onDelete: Cascade)
   source JobSource      @relation(fields: [sourceId], references: [id], onDelete: Restrict)
@@ -860,15 +873,25 @@ model EmployerBoard {
   consecutiveFailures Int            @default(0) @map("consecutive_failures")
   lastErrorAt         DateTime?      @map("last_error_at") @db.Timestamptz(3)
   lastErrorMessage    String?        @map("last_error_message")
+  /// Machine-readable code of the last failure (AtsError code); drives retry policy.
+  lastErrorCode       String?        @map("last_error_code")
+  /// When the background worker should next sync this board. Null = not scheduled
+  /// (disabled, demo, or paused after a permanent configuration error).
+  nextSyncAt          DateTime?      @map("next_sync_at") @db.Timestamptz(3)
+  /// Worker lease: which worker claimed the board and until when (crash recovery).
+  syncLeaseOwner      String?        @map("sync_lease_owner")
+  syncLeaseExpiresAt  DateTime?      @map("sync_lease_expires_at") @db.Timestamptz(3)
   isDemo              Boolean        @default(false) @map("is_demo")
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   source       JobSource           @relation(fields: [provider], references: [provider], onDelete: Restrict)
   observations SourceObservation[]
+  syncRuns     BoardSyncRun[]
 
   @@unique([provider, boardToken])
   @@index([enabled, lastCheckedAt])
+  @@index([nextSyncAt])
   @@map("employer_boards")
 }
 
@@ -898,4 +921,75 @@ model UserSettings {
   updatedAt                  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("user_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Board synchronization (Milestone 3A; manually triggered, no scheduler)
+// ---------------------------------------------------------------------------
+
+/// What a provider's publication timestamp means. Only `first_published`
+/// supports a publication-to-discovery latency.
+enum PublishedAtKind {
+  none
+  first_published
+  last_published
+  updated
+
+  @@map("published_at_kind")
+}
+
+enum SyncRunStatus {
+  running
+  succeeded
+  /// Finished, but the catalogue was incomplete or some postings failed; nothing was expired.
+  partial
+  failed
+  /// Not run (e.g. another sync of the board was already running).
+  skipped
+
+  @@map("sync_run_status")
+}
+
+enum SyncTrigger {
+  manual
+  scheduled
+
+  @@map("sync_trigger")
+}
+
+/// One synchronization of one employer board. A partial unique index allows at
+/// most one `running` run per board (prevents concurrent syncs).
+model BoardSyncRun {
+  id           String        @id @default(uuid()) @db.Uuid
+  boardId      String        @map("board_id") @db.Uuid
+  status       SyncRunStatus @default(running)
+  trigger      SyncTrigger   @default(manual)
+  startedAt    DateTime      @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt   DateTime?     @map("finished_at") @db.Timestamptz(3)
+  durationMs   Int?          @map("duration_ms")
+  /// Postings returned by the provider.
+  fetched      Int           @default(0)
+  created      Int           @default(0)
+  updated      Int           @default(0)
+  unchanged    Int           @default(0)
+  /// Postings newly marked inactive (absent from two consecutive complete snapshots).
+  closed       Int           @default(0)
+  /// Previously inactive postings listed again.
+  reactivated  Int           @default(0)
+  /// Active postings absent from this complete snapshot (not yet inactive).
+  missing      Int           @default(0)
+  /// Whether the provider returned a provably complete catalogue (null while running).
+  complete     Boolean?
+  /// Not Canadian, or not an internship / co-op / new-grad / junior role.
+  skipped      Int           @default(0)
+  errorCount   Int           @default(0) @map("error_count")
+  errorCode    String?       @map("error_code")
+  errorMessage String?       @map("error_message")
+  /// Per-posting problems and skip reasons (bounded).
+  details      Json?
+
+  board EmployerBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId, startedAt(sort: Desc)])
+  @@map("board_sync_runs")
 }

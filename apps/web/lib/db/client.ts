@@ -6,7 +6,18 @@ export function createPrismaClient(connectionString: string): PrismaClient {
   if (!connectionString) {
     throw new Error("A PostgreSQL connection string is required. Set DATABASE_URL (see .env.example).");
   }
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  return new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString,
+      // Fail fast instead of hanging when PostgreSQL (e.g. a restarted Docker
+      // container) is unreachable, and drop idle sockets before a NAT/VM
+      // network layer silently kills them. Matters most for the long-running
+      // sync worker.
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 60_000,
+      keepAlive: true,
+    }),
+  });
 }
 
 const globalForPrisma = globalThis as unknown as { prorezPrisma?: PrismaClient };

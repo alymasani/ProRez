@@ -1,0 +1,32 @@
+{
+  "jobs": [
+    {
+      "id": 7100001,
+      "title": "Robotics Software Developer Co-op (Summer 2027)",
+      "absolute_url": "https://job-boards.greenhouse.io/prorez-demo-northlight/jobs/7100001",
+      "updated_at": "2026-11-10T09:00:00-05:00",
+      "location": { "name": "Toronto, ON (Hybrid)" },
+      "content": "&lt;p&gt;FICTIONAL recorded response for automated tests. A 4-month co-op building fleet software.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Python&lt;/li&gt;&lt;li&gt;PostgreSQL&lt;/li&gt;&lt;/ul&gt;",
+      "departments": [{ "id": 1, "name": "Engineering" }],
+      "offices": [],
+      "metadata": []
+    },
+    {
+      "id": 7100002,
+      "title": "Senior Robotics Engineer",
+      "absolute_url": "https://job-boards.greenhouse.io/prorez-demo-northlight/jobs/7100002",
+      "updated_at": "2026-11-10T09:00:00-05:00",
+      "location": { "name": "Toronto, ON" },
+      "content": "&lt;p&gt;Fictional.&lt;/p&gt;"
+    },
+    {
+      "id": 7100003,
+      "title": "Software Engineering Intern",
+      "absolute_url": "https://job-boards.greenhouse.io/prorez-demo-northlight/jobs/7100003",
+      "updated_at": "2026-11-10T09:00:00-05:00",
+      "location": { "name": "Remote - Worldwide" },
+      "content": "&lt;p&gt;Fictional.&lt;/p&gt;"
+    }
+  ],
+  "meta": { "total": 3 }
+}

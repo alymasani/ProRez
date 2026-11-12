@@ -6,6 +6,7 @@
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "start": "next start -H 127.0.0.1",
+    "worker": "tsx scripts/sync-worker.ts",
     "lint": "eslint",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -20,7 +21,9 @@
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "test:db": "vitest run --config vitest.db.config.mts",
-    "test:e2e:db": "playwright test --config playwright.db.config.ts"
+    "test:e2e:db": "playwright test --config playwright.db.config.ts",
+    "test:e2e:render": "playwright test --config playwright.render.config.ts",
+    "test:smoke": "vitest run --config vitest.smoke.config.mts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

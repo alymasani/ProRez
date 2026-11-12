@@ -42,7 +42,7 @@ export function formatDuration(months: number | null): string {
 }
 
 export function formatLocation(location: JobLocation): string {
-  return `${location.city}, ${location.province}`;
+  return `${location.city}, ${location.province ?? "Canada"}`;
 }
 
 /** "Toronto, ON · Hybrid" or "Toronto, ON +2 more". */

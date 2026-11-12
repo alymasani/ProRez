@@ -325,3 +325,39 @@ describe("demo profiles against demo jobs", () => {
     expect(run("job-017").matches).toEqual([]);
   });
 });
+
+// Audit regression: an ATS posting whose work arrangement was never stated
+// (e.g. every Greenhouse posting without "Remote"/"Hybrid" in its location)
+// must not be hard-rejected by a remote/hybrid-only profile as if on-site.
+describe("unstated work arrangement", () => {
+  const unstated = [{ city: "Toronto", province: "ON" as const, arrangement: "onsite" as const, arrangementStated: false as const }];
+  const stated = [{ city: "Toronto", province: "ON" as const, arrangement: "onsite" as const }];
+  const remoteOrHybrid = { provinces: [], arrangements: ["remote", "hybrid"] as ("remote" | "hybrid")[], includeRemoteCanadaWide: true };
+
+  it("is unknown (needs review), not a failure, when the profile restricts arrangements", () => {
+    const r = checkLocation(unstated, remoteOrHybrid);
+    expect(r.result).toBe("unknown");
+    expect(r.detail).toMatch(/not stated/);
+  });
+
+  it("still fails a stated on-site role for a remote/hybrid-only profile", () => {
+    expect(checkLocation(stated, remoteOrHybrid).result).toBe("fail");
+  });
+
+  it("still fails when the province is outside the profile even if the arrangement is unstated", () => {
+    expect(checkLocation(unstated, { provinces: ["BC"], arrangements: ["remote"], includeRemoteCanadaWide: false }).result).toBe("fail");
+  });
+
+  it("passes an on-site-accepting profile and labels the arrangement as not stated", () => {
+    const r = checkLocation(unstated, { provinces: ["ON"], arrangements: [], includeRemoteCanadaWide: false });
+    expect(r.result).toBe("pass");
+    expect(r.detail).toMatch(/arrangement not stated/);
+  });
+
+  it("makes a full evaluation needs_review rather than not_a_match", () => {
+    const j = job({ locations: unstated });
+    const p = profile("p-remote", { arrangements: ["remote", "hybrid"] });
+    expect(checkOf(j, p, "location").result).toBe("unknown");
+    expect(evaluateJobForProfile(j, p).outcome).toBe("needs_review");
+  });
+});

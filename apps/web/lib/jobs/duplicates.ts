@@ -87,7 +87,7 @@ export function titleSimilarity(a: string, b: string): number {
 }
 
 const sameLocation = (a: JobLocation | null, b: JobLocation | undefined) =>
-  a !== null && b !== undefined && slugify(`${a.city} ${a.province}`) === slugify(`${b.city} ${b.province}`);
+  a !== null && b !== undefined && slugify(`${a.city} ${a.province ?? "canada"}`) === slugify(`${b.city} ${b.province ?? "canada"}`);
 
 export function classifyDuplicates(probe: DuplicateProbe, candidates: readonly DuplicateCandidate[]): DuplicateMatch[] {
   const company = slugify(probe.company);

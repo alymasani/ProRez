@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { Archive, Plus } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { CardGridSkeleton } from "@/components/page-skeletons";
 import { ProfilesList } from "@/components/profiles/profiles-list";
 import { PreviewNotice } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -10,10 +12,8 @@ import { getArchivedSearchProfiles, getProfileHistoryCounts, getSearchProfiles }
 
 export const metadata: Metadata = { title: "Search profiles" };
 
-export default async function ProfilesPage() {
+export default function ProfilesPage() {
   const saving = getMutationAvailability();
-  const [profiles, archived] = await Promise.all([getSearchProfiles(), getArchivedSearchProfiles()]);
-  const matchCounts = await getProfileHistoryCounts(profiles.map((p) => p.id));
 
   return (
     <div className="space-y-6">
@@ -34,6 +34,18 @@ export default async function ProfilesPage() {
           real matching engine.
         </PreviewNotice>
       )}
+      <Suspense fallback={<CardGridSkeleton label="Loading search profiles…" cards={2} />}>
+        <ProfilesContent saving={saving} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ProfilesContent({ saving }: { saving: ReturnType<typeof getMutationAvailability> }) {
+  const [profiles, archived] = await Promise.all([getSearchProfiles(), getArchivedSearchProfiles()]);
+  const matchCounts = await getProfileHistoryCounts(profiles.map((p) => p.id));
+  return (
+    <>
       <ProfilesList profiles={profiles} matchCounts={matchCounts} saving={saving} />
       {archived.length > 0 ? (
         <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -49,6 +61,6 @@ export default async function ProfilesPage() {
           ))}
         </p>
       ) : null}
-    </div>
+    </>
   );
 }

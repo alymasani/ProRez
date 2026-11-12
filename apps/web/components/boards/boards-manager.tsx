@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useTransition, type FormEvent } from "react";
-import { Building, LoaderCircle, Plus, Trash2, WandSparkles } from "lucide-react";
-import { createBoardAction, deleteBoardAction, setBoardEnabledAction } from "@/app/boards/actions";
+import { Building, LoaderCircle, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
+import { createBoardAction, deleteBoardAction, setBoardEnabledAction, syncBoardAction } from "@/app/boards/actions";
 import { describedBy, Field } from "@/components/forms/field";
-import { FutureAction } from "@/components/future-action";
 import { EmptyState, PreviewNotice } from "@/components/states";
 import { DemoBadge, StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -13,11 +12,12 @@ import { Input, NativeSelect } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { canonicalBoardUrl, isValidBoardToken, parseBoardUrl } from "@/lib/boards/board-url";
-import { BOARD_HEALTH, boardHealth, formatPollInterval } from "@/lib/boards/health";
+import { BOARD_HEALTH, boardHealth, boardSyncState, formatPollInterval, type BoardSyncState } from "@/lib/boards/health";
+import type { StatusMeta } from "@/lib/labels";
 import { POLL_INTERVAL } from "@/lib/boards/schema";
 import { formatDateTime } from "@/lib/format";
 import { SOURCE_PROVIDER_LABELS } from "@/lib/labels";
-import { ATS_PROVIDERS, type AtsProvider, type EmployerBoard } from "@/lib/types";
+import { ATS_PROVIDERS, type AtsProvider, type BoardSyncRun, type EmployerBoard } from "@/lib/types";
 
 const POLL_OPTIONS = [60, 180, 360, 720, 1440];
 
@@ -33,11 +33,45 @@ const EMPTY_FORM: { url: string; provider: AtsProvider; employerName: string; bo
 
 export function BoardsManager({
   boards,
+  runs = [],
   saving,
 }: {
   boards: EmployerBoard[];
+  runs?: BoardSyncRun[];
   saving: { enabled: boolean; reason: string | null };
 }) {
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const latestRun = (boardId: string) => runs.find((r) => r.boardId === boardId) ?? null;
+  const boardName = (boardId: string) => {
+    const b = boards.find((x) => x.id === boardId);
+    return b ? `${b.employerName} (${SOURCE_PROVIDER_LABELS[b.provider]})` : "Removed board";
+  };
+
+  async function sync(board: EmployerBoard) {
+    setSyncingId(board.id);
+    setNotice(null);
+    try {
+      const result = await syncBoardAction(board.id);
+      if (!result.ok) {
+        setNotice({ tone: "error", text: result.message });
+      } else if (result.value.status === "failed") {
+        setNotice({ tone: "error", text: `Sync of ${board.employerName} failed: ${result.value.errorMessage ?? "unknown error"} Imported postings were kept; you can retry.` });
+      } else {
+        const v = result.value;
+        const counts = `${v.fetched} published, ${v.created} new, ${v.updated} changed, ${v.unchanged} unchanged, ${v.reactivated} reactivated, ${v.missing} missing, ${v.closed} inactivated, ${v.skipped} skipped${v.errorCount ? `, ${v.errorCount} errors` : ""}`;
+        setNotice(
+          v.status === "partial"
+            ? { tone: "error", text: `Synced ${board.employerName} partially: ${counts}. ${v.errorMessage ?? ""}`.trim() }
+            : { tone: "success", text: `Synced ${board.employerName}: ${counts}.` },
+        );
+      }
+    } catch {
+      setNotice({ tone: "error", text: "The sync request failed. Nothing was lost; please retry." });
+    } finally {
+      setSyncingId(null);
+    }
+  }
+
   const [form, setForm] = useState(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice>(null);
@@ -118,7 +152,10 @@ export function BoardsManager({
         <CardHeader>
           <CardTitle>Registered boards</CardTitle>
           <CardDescription>
-            Each employer&apos;s public board on a supported ATS. ProRez does not poll boards yet, so nothing has been checked.
+            Each employer&apos;s public board on a supported ATS. Enabled boards are synced automatically by the
+            background worker (<code className="text-xs">npm run worker</code>) at their check interval;{" "}
+            <span className="font-medium">Sync now</span> runs one immediately. Only Canadian internship, co-op,
+            new-grad and junior postings are imported.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -132,8 +169,8 @@ export function BoardsManager({
                     <TableHead>Employer</TableHead>
                     <TableHead>Board</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Polling</TableHead>
-                    <TableHead>Last check</TableHead>
+                    <TableHead>Last sync</TableHead>
+                    <TableHead>Schedule</TableHead>
                     <TableHead>
                       <span className="sr-only">Actions</span>
                     </TableHead>
@@ -167,20 +204,53 @@ export function BoardsManager({
                             />
                             <StatusBadge meta={BOARD_HEALTH[health]} srPrefix="Health:" />
                           </div>
+                          <div className="mt-1">
+                            <StatusBadge meta={SYNC_STATE[boardSyncState({ ...board, running: board.syncing })]} srPrefix="Automatic sync:" />
+                          </div>
                           {board.lastErrorMessage ? (
-                            <p className="mt-1 text-xs text-destructive">
-                              {board.consecutiveFailures} failure{board.consecutiveFailures === 1 ? "" : "s"}: {board.lastErrorMessage}
-                            </p>
+                            board.lastErrorCode === "incomplete" ? (
+                              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Last sync incomplete: {board.lastErrorMessage}</p>
+                            ) : (
+                              <p className="mt-1 text-xs text-destructive">
+                                {board.consecutiveFailures} failure{board.consecutiveFailures === 1 ? "" : "s"}: {board.lastErrorMessage}
+                              </p>
+                            )
                           ) : null}
                         </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
-                          {formatPollInterval(board.pollIntervalMinutes)}
+                        <TableCell className="min-w-48 text-xs text-muted-foreground">
+                          <RunSummary run={latestRun(board.id)} />
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                          <div>Checked: {board.lastCheckedAt ? formatDateTime(board.lastCheckedAt) : "never"}</div>
-                          <div>Succeeded: {board.lastSuccessAt ? formatDateTime(board.lastSuccessAt) : "never"}</div>
+                          <div>
+                            Next sync:{" "}
+                            {board.syncing
+                              ? "running now"
+                              : board.nextSyncAt
+                                ? <time dateTime={board.nextSyncAt}>{formatDateTime(board.nextSyncAt)}</time>
+                                : nextSyncReason(board)}
+                          </div>
+                          <div>Last success: {board.lastSuccessAt ? formatDateTime(board.lastSuccessAt) : "never"}</div>
+                          <div>Last checked: {board.lastCheckedAt ? formatDateTime(board.lastCheckedAt) : "never"}</div>
+                          <div>
+                            Active jobs: <span className="font-medium text-foreground">{board.activeJobCount}</span> ·{" "}
+                            {formatPollInterval(board.pollIntervalMinutes)}
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right whitespace-nowrap">
+                          {saving.enabled ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={!board.enabled || syncingId !== null}
+                              onClick={() => void sync(board)}
+                              aria-label={`Sync ${board.employerName} ${SOURCE_PROVIDER_LABELS[board.provider]} board now`}
+                              title={board.enabled ? undefined : "Enable the board to sync it"}
+                            >
+                              {syncingId === board.id ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                              {syncingId === board.id ? "Syncing…" : "Sync now"}
+                            </Button>
+                          ) : null}
                           {saving.enabled ? (
                             <Button
                               type="button"
@@ -203,6 +273,44 @@ export function BoardsManager({
           )}
         </CardContent>
       </Card>
+
+      {runs.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sync history</CardTitle>
+            <CardDescription>
+              Recent manual and automatic syncs. Skipped postings are outside Canada or not entry-level roles. A posting is
+              marked inactive only after two consecutive complete syncs no longer list it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="divide-y rounded-lg border text-sm" aria-label="Sync history">
+              {runs.map((run) => (
+                <li key={run.id} className="space-y-1 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">{boardName(run.boardId)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(run.startedAt)}</span>
+                  </div>
+                  <RunSummary run={run} />
+                  {run.details.length > 0 ? (
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">Skipped, warning and error details ({run.details.length})</summary>
+                      <ul className="mt-1 max-h-48 list-disc space-y-0.5 overflow-auto pl-5">
+                        {run.details.map((d, i) => (
+                          <li key={`${d.postingId}-${i}`}>
+                            {d.kind === "error" ? "Error" : d.kind === "warning" ? "Warning" : "Skipped"}
+                            {d.postingId ? ` ${d.postingId}` : ""}: {d.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -285,14 +393,63 @@ export function BoardsManager({
                   {isPending ? "Saving…" : "Register board"}
                 </Button>
               ) : (
-                <FutureAction variant="default" size="default" reason={saving.reason ?? undefined}>
+                // Saving is switched off by configuration (fixture mode or local
+                // mutations disabled) — not an unbuilt feature, so no "Soon" badge.
+                <Button type="button" disabled title={saving.reason ?? undefined}>
                   <Plus /> Register board
-                </FutureAction>
+                  <span className="sr-only">({saving.reason})</span>
+                </Button>
               )}
             </div>
           </form>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+const RUN_STATUS: Record<Exclude<BoardSyncRun["status"], "running">, StatusMeta> = {
+  succeeded: { label: "Succeeded", tone: "success" },
+  partial: { label: "Partial", tone: "warning" },
+  failed: { label: "Failed", tone: "danger" },
+  skipped: { label: "Skipped", tone: "muted" },
+};
+
+const SYNC_STATE: Record<BoardSyncState, StatusMeta> = {
+  scheduled: { label: "Scheduled", tone: "success" },
+  running: { label: "Syncing", tone: "neutral" },
+  retrying: { label: "Retrying", tone: "warning" },
+  paused: { label: "Paused — needs attention", tone: "danger" },
+  disabled: { label: "Not scheduled", tone: "muted" },
+  demo: { label: "Demo — not scheduled", tone: "muted" },
+};
+
+function nextSyncReason(board: EmployerBoard): string {
+  if (!board.enabled) return "not scheduled (disabled)";
+  if (board.isDemo) return "never (demo board)";
+  return "paused — fix the board, then disable and re-enable it or sync now";
+}
+
+function RunSummary({ run }: { run: BoardSyncRun | null }) {
+  if (!run) return <span>Never synced</span>;
+  if (run.status === "running") return <span>Sync in progress ({run.trigger === "scheduled" ? "automatic" : "manual"})…</span>;
+  const duration = run.durationMs !== null ? `${(run.durationMs / 1000).toFixed(1)} s` : "";
+  return (
+    <div className="space-y-0.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusBadge meta={RUN_STATUS[run.status]} srPrefix="Last sync:" />
+        <span>{run.trigger === "scheduled" ? "Automatic" : "Manual"}</span>
+      </div>
+      {run.status === "skipped" ? null : (
+        <div>
+          {run.fetched} published · {run.created} new · {run.updated} changed · {run.unchanged} unchanged
+          {run.reactivated > 0 ? ` · ${run.reactivated} reactivated` : ""}
+          {run.missing > 0 ? ` · ${run.missing} missing` : ""} · {run.closed} inactivated · {run.skipped} skipped
+          {run.errorCount > 0 ? ` · ${run.errorCount} error${run.errorCount === 1 ? "" : "s"}` : ""}
+          {duration ? ` · ${duration}` : ""}
+        </div>
+      )}
+      {run.errorMessage ? <div className={run.status === "failed" ? "text-destructive" : "text-amber-700 dark:text-amber-300"}>{run.errorMessage}</div> : null}
     </div>
   );
 }

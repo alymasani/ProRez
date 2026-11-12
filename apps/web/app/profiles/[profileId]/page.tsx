@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { DetailSkeleton } from "@/components/page-skeletons";
 import { ProfileEditor } from "@/components/profiles/profile-editor";
 import { ProfileSummary } from "@/components/profiles/profile-summary";
 import { PreviewNotice } from "@/components/states";
@@ -20,7 +22,17 @@ export async function generateMetadata({ params }: PageProps<"/profiles/[profile
   return { title: (await getSearchProfile(profileId))?.name ?? "Profile not found" };
 }
 
-export default async function EditProfilePage({ params, searchParams }: PageProps<"/profiles/[profileId]">) {
+export default function EditProfilePage({ params, searchParams }: PageProps<"/profiles/[profileId]">) {
+  return (
+    <Suspense fallback={<DetailSkeleton label="Loading profile…" />}>
+      <EditProfile params={params} searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+type EditProfileProps = Pick<PageProps<"/profiles/[profileId]">, "params" | "searchParams">;
+
+async function EditProfile({ params, searchParams }: EditProfileProps) {
   const [{ profileId }, query] = await Promise.all([params, searchParams]);
   const profile = await getSearchProfile(profileId);
   if (!profile) notFound();

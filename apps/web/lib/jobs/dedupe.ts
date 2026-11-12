@@ -18,7 +18,7 @@ export function slugify(value: string): string {
 }
 
 export function buildDedupeKey(company: string, title: string, primaryLocation: JobLocation | null): string {
-  const location = primaryLocation ? slugify(`${primaryLocation.city} ${primaryLocation.province}`) : "unspecified";
+  const location = primaryLocation ? slugify(`${primaryLocation.city} ${primaryLocation.province ?? "canada"}`) : "unspecified";
   const key = [slugify(company), slugify(title), location].join("|");
   if (key.startsWith("|") || key.includes("||")) {
     throw new Error("Cannot build a dedupe key without a company and title.");

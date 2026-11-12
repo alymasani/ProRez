@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { DocumentLibrary } from "@/components/documents/document-library";
 import { PageHeader } from "@/components/page-header";
+import { TableSkeleton } from "@/components/page-skeletons";
 import { PreviewNotice } from "@/components/states";
 import { getCoverLetters, getJobIndex } from "@/lib/data";
 import { toDocumentItems } from "@/lib/documents";
 
 export const metadata: Metadata = { title: "Cover letters" };
 
-export default async function CoverLettersPage() {
-  const [letters, jobIndex] = await Promise.all([getCoverLetters(), getJobIndex()]);
-  const items = toDocumentItems(letters, jobIndex);
+export default function CoverLettersPage() {
   return (
     <div className="space-y-6">
       <PageHeader
@@ -19,7 +19,14 @@ export default async function CoverLettersPage() {
       <PreviewNotice title="Demo records — no files exist yet">
         These entries illustrate the library layout. Cover letter generation and downloads arrive in a later milestone.
       </PreviewNotice>
-      <DocumentLibrary items={items} noun="cover letter" />
+      <Suspense fallback={<TableSkeleton label="Loading cover letters…" />}>
+        <Library />
+      </Suspense>
     </div>
   );
+}
+
+async function Library() {
+  const [letters, jobIndex] = await Promise.all([getCoverLetters(), getJobIndex()]);
+  return <DocumentLibrary items={toDocumentItems(letters, jobIndex)} noun="cover letter" />;
 }

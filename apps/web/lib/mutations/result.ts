@@ -11,6 +11,7 @@ export type MutationErrorCode =
   | "possible_duplicate"
   | "not_editable"
   | "invalid_transition"
+  | "sync_in_progress"
   | "version_conflict"
   | "not_found"
   | "archived"

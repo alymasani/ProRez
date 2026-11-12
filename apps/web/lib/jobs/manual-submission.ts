@@ -6,6 +6,7 @@
  * Everything here is untrusted user input. Descriptions are kept as plain
  * text; nothing is interpreted, rendered as HTML, or fetched.
  */
+import { firstParagraph } from "./description";
 import {
   DISCIPLINES,
   JOB_TYPES,
@@ -285,7 +286,7 @@ export function inputFromJob(job: JobPosting): ManualJobInput {
 /** Short plain-text summary for list views: the first paragraph, trimmed. */
 export function summarizeDescription(description: string | null, maxLength = 280): string {
   if (!description) return "";
-  const firstParagraph = description.split(/\n\s*\n/).find((p) => p.trim()) ?? "";
-  const flat = firstParagraph.replace(/\s+/g, " ").trim();
+  // Skip leading headings such as "WHO ARE WE?" — they say nothing about the role.
+  const flat = firstParagraph(description).replace(/\s+/g, " ").trim();
   return flat.length <= maxLength ? flat : `${flat.slice(0, maxLength - 1).trimEnd()}…`;
 }

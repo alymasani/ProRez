@@ -5,33 +5,22 @@ import { Plus } from "lucide-react";
 import { JobsExplorer } from "@/components/jobs/jobs-explorer";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExplorerSkeleton } from "@/components/page-skeletons";
 import { getJobsWithMatches } from "@/lib/data";
+import { resolveDataSource } from "@/lib/repositories/source";
 
 export const metadata: Metadata = { title: "Job discovery" };
 
-function ExplorerSkeleton() {
-  return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[15rem_1fr]" role="status" aria-live="polite">
-      <span className="sr-only">Loading jobs…</span>
-      <Skeleton className="hidden h-[32rem] rounded-xl lg:block" />
-      <div className="space-y-3">
-        <Skeleton className="h-9 w-full" />
-        {Array.from({ length: 5 }, (_, i) => (
-          <Skeleton key={i} className="h-32 rounded-xl" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export default async function JobsPage() {
-  const items = await getJobsWithMatches();
+export default function JobsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
         title="Job discovery"
-        description="Software engineering internships, co-ops, and new grad roles across Canada. Listings and fit scores are fictional demo data; live source monitoring arrives in a later milestone."
+        description={
+          resolveDataSource(process.env) === "database"
+            ? "Software engineering internships, co-ops, and new grad roles across Canada, from employer boards you sync and jobs you add. Records marked Demo are fictional."
+            : "Software engineering internships, co-ops, and new grad roles across Canada. Listings and fit scores are fictional demo data; live source monitoring arrives in a later milestone."
+        }
         actions={
           <Button asChild variant="outline">
             <Link href="/jobs/new">
@@ -40,10 +29,14 @@ export default async function JobsPage() {
           </Button>
         }
       />
-      {/* Filter state lives in the URL, so the explorer reads search params inside Suspense. */}
+      {/* Request-time jobs and URL filter state (useSearchParams) both resolve inside this boundary. */}
       <Suspense fallback={<ExplorerSkeleton />}>
-        <JobsExplorer items={items} />
+        <JobsResults />
       </Suspense>
     </div>
   );
+}
+
+async function JobsResults() {
+  return <JobsExplorer items={await getJobsWithMatches()} />;
 }

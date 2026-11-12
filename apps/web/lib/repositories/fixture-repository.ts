@@ -59,6 +59,28 @@ export function createFixtureRepository(): DataRepository {
       [...DEMO_EMPLOYER_BOARDS].sort(
         (a, b) => a.employerName.localeCompare(b.employerName) || a.provider.localeCompare(b.provider),
       ),
+    // Fixtures are never synced.
+    listBoardSyncRuns: async () => [],
+    listJobSightings: async (jobId) => {
+      const job = DEMO_JOBS.find((j) => j.id === jobId);
+      if (!job) return [];
+      const source = DEMO_JOB_SOURCES.find((s) => s.id === job.sourceId);
+      return [
+        {
+          id: `sighting-${job.id}`,
+          provider: source?.provider ?? "manual",
+          boardName: null,
+          postingId: job.externalId,
+          sourceUrl: job.postingUrl,
+          providerPublishedAt: null,
+          publishedAtKind: "none" as const,
+          firstSeenAt: job.discoveredAt,
+          lastSeenAt: job.discoveredAt,
+          closedAt: null,
+          discoveryLatencyMs: null,
+        },
+      ];
+    },
     getDefaultPreferences: async () => structuredClone(DEFAULT_PREFERENCES),
   };
 }

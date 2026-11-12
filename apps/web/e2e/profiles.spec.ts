@@ -58,9 +58,9 @@ test.describe("search profile editor", () => {
     await page.goto("/profiles/new");
     await page.getByRole("checkbox", { name: "New grad", exact: true }).click();
     const durationGroup = page.getByRole("group", { name: "Internship duration" });
-    await expect(durationGroup.getByRole("checkbox", { name: "4 months" })).toBeDisabled();
+    await expect(durationGroup.getByRole("checkbox", { name: "Exactly 4 months" })).toBeDisabled();
     await page.getByRole("checkbox", { name: "Co-op" }).click();
-    await expect(durationGroup.getByRole("checkbox", { name: "4 months" })).toBeEnabled();
+    await expect(durationGroup.getByRole("checkbox", { name: "Exactly 4 months" })).toBeEnabled();
   });
 
   test("keywords included and excluded at once are flagged", async ({ page }) => {

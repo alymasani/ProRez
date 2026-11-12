@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { FolderGit2, GitBranch, Lock } from "lucide-react";
 import { FutureAction } from "@/components/future-action";
 import { PageHeader } from "@/components/page-header";
+import { CardGridSkeleton } from "@/components/page-skeletons";
 import { EmptyState, PreviewNotice } from "@/components/states";
 import { DemoBadge, StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -13,9 +15,7 @@ import { CHECK_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Projects" };
 
-export default async function ProjectsPage() {
-  const [projects, jobs] = await Promise.all([getProjects(), getJobIndex()]);
-
+export default function ProjectsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
@@ -27,6 +27,17 @@ export default async function ProjectsPage() {
         later milestones.
       </PreviewNotice>
 
+      <Suspense fallback={<CardGridSkeleton label="Loading projects…" />}>
+        <ProjectsList />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ProjectsList() {
+  const [projects, jobs] = await Promise.all([getProjects(), getJobIndex()]);
+  return (
+    <>
       {projects.length === 0 ? (
         <EmptyState icon={FolderGit2} title="No projects yet" description="Projects appear here after a Full Build." />
       ) : (
@@ -114,6 +125,6 @@ export default async function ProjectsPage() {
           ))}
         </ul>
       )}
-    </div>
+    </>
   );
 }

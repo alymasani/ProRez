@@ -66,7 +66,7 @@ function matchesQuery({ job }: JobWithMatch, query: string): boolean {
       job.title,
       job.company,
       job.summary,
-      ...job.locations.map((l) => `${l.city} ${l.province}`),
+      ...job.locations.map((l) => `${l.city} ${l.province ?? "Canada"}`),
     ].join(" "),
   );
   return terms.every((term) => haystack.includes(term));
@@ -86,7 +86,13 @@ export function filterJobs(items: readonly JobWithMatch[], filters: JobFilters):
     const { job } = item;
     if (!filters.includeInactive && isInactive(item)) return false;
     if (!matchesQuery(item, filters.query)) return false;
-    if (!anyOf(filters.provinces, job.locations.map((l) => l.province))) return false;
+    // A province-less (Canada-wide remote) location is open in every province.
+    if (
+      filters.provinces.length > 0 &&
+      !job.locations.some((l) => l.province === null || filters.provinces.includes(l.province))
+    ) {
+      return false;
+    }
     if (!anyOf(filters.arrangements, job.locations.map((l) => l.arrangement))) return false;
     if (!anyOf(filters.jobTypes, [job.jobType])) return false;
     if (!anyOf(filters.durations, [durationBucket(job.durationMonths)])) return false;

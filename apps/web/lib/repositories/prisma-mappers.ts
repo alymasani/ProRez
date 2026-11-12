@@ -3,8 +3,12 @@
  * Kept separate from queries so the shapes are easy to review and test.
  */
 import type { Prisma } from "../generated/prisma/client";
+import { mapJobLocation } from "@/lib/repositories/job-location";
 import type { DurationRequirement as DbDurationRequirement } from "../generated/prisma/enums";
+import { discoveryLatencyMs } from "../ats/metrics";
 import type {
+  BoardSyncRun,
+  JobSourceRecord,
   AtsProvider,
   EmployerBoard,
   Application,
@@ -98,7 +102,7 @@ export function toJobPosting(row: JobRow): JobPosting {
     externalId: primary?.externalId ?? null,
     company: row.company,
     title: row.title,
-    locations: row.locations.map((l) => ({ city: l.city, province: l.province, arrangement: l.arrangement })),
+    locations: row.locations.map(mapJobLocation),
     jobType: row.jobType,
     durationMonths: row.durationMonths,
     term: row.term,
@@ -365,7 +369,55 @@ export function toJobProfileMatch(row: EvaluationRow): JobProfileMatch | null {
   };
 }
 
-export function toEmployerBoard(row: Prisma.EmployerBoardGetPayload<object>): EmployerBoard {
+export function toBoardSyncRun(row: Prisma.BoardSyncRunGetPayload<object>): BoardSyncRun {
+  return {
+    id: row.id,
+    boardId: row.boardId,
+    status: row.status,
+    trigger: row.trigger,
+    complete: row.complete,
+    startedAt: iso(row.startedAt),
+    finishedAt: isoOrNull(row.finishedAt),
+    durationMs: row.durationMs,
+    fetched: row.fetched,
+    created: row.created,
+    updated: row.updated,
+    unchanged: row.unchanged,
+    reactivated: row.reactivated,
+    missing: row.missing,
+    closed: row.closed,
+    skipped: row.skipped,
+    errorCount: row.errorCount,
+    errorCode: row.errorCode,
+    errorMessage: row.errorMessage,
+    details: Array.isArray(row.details) ? (row.details as BoardSyncRun["details"]) : [],
+  };
+}
+
+export function toJobSourceRecord(
+  row: Prisma.SourceObservationGetPayload<{ include: { source: { select: { provider: true } }; board: { select: { employerName: true } } } }>,
+): JobSourceRecord {
+  return {
+    id: row.id,
+    provider: row.atsProvider ?? row.source.provider,
+    boardName: row.board?.employerName ?? null,
+    postingId: row.atsPostingId ?? row.externalId,
+    sourceUrl: row.sourceUrl,
+    providerPublishedAt: isoOrNull(row.providerPublishedAt),
+    publishedAtKind: row.publishedAtKind,
+    firstSeenAt: iso(row.firstSeenAt),
+    lastSeenAt: iso(row.lastSeenAt),
+    closedAt: isoOrNull(row.closedAt),
+    discoveryLatencyMs: discoveryLatencyMs(row.providerPublishedAt, row.publishedAtKind, row.firstSeenAt),
+  };
+}
+
+export function toEmployerBoard(
+  row: Prisma.EmployerBoardGetPayload<object>,
+  live: { syncing?: boolean; activeJobCount?: number; now?: Date } = {},
+): EmployerBoard {
+  const now = live.now ?? new Date();
+  const leased = row.syncLeaseExpiresAt !== null && row.syncLeaseExpiresAt > now;
   return {
     id: row.id,
     // Guaranteed by the employer_boards_ats_provider CHECK constraint.
@@ -375,6 +427,10 @@ export function toEmployerBoard(row: Prisma.EmployerBoardGetPayload<object>): Em
     boardUrl: row.boardUrl,
     enabled: row.enabled,
     pollIntervalMinutes: row.pollIntervalMinutes,
+    nextSyncAt: isoOrNull(row.nextSyncAt),
+    syncing: (live.syncing ?? false) || leased,
+    activeJobCount: live.activeJobCount ?? 0,
+    lastErrorCode: row.lastErrorCode,
     lastCheckedAt: isoOrNull(row.lastCheckedAt),
     lastSuccessAt: isoOrNull(row.lastSuccessAt),
     consecutiveFailures: row.consecutiveFailures,

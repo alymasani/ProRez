@@ -6,6 +6,8 @@ import { z } from "zod";
 import { requireMutationAccess } from "@/lib/auth/server-actor";
 import { parseBoardInput } from "@/lib/boards/schema";
 import { createBoard, deleteBoard, setBoardEnabled } from "@/lib/boards/service";
+import { resolveTransport } from "@/lib/ats/http";
+import { syncBoard, type SyncSummary } from "@/lib/ats/sync";
 import { getPrisma } from "@/lib/db/client";
 import { fail, type MutationResult } from "@/lib/mutations/result";
 import type { EmployerBoard } from "@/lib/types";
@@ -52,5 +54,19 @@ export async function deleteBoardAction(id: unknown): Promise<MutationResult<{ i
     const bid = idSchema.safeParse(id);
     if (!bid.success) return fail("validation", "Invalid request.");
     return deleteBoard(getPrisma(), bid.data);
+  });
+}
+
+/**
+ * Manually synchronizes one registered board: fetches its published postings
+ * from the provider's official public API and ingests them. Same local-only
+ * access rules as every other write. The request target is derived from the
+ * stored provider + validated board token only (lib/ats/http.ts allow-list).
+ */
+export async function syncBoardAction(id: unknown): Promise<MutationResult<SyncSummary>> {
+  return run(async () => {
+    const bid = idSchema.safeParse(id);
+    if (!bid.success) return fail("validation", "Invalid request.");
+    return syncBoard(getPrisma(), bid.data, { transport: resolveTransport() });
   });
 }

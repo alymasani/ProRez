@@ -11,6 +11,7 @@ internships, co-ops, and new grad roles, and managing applications.
 
 ```bash
 npm run dev     # development server on http://127.0.0.1:3000 (loopback only)
+npm run worker  # background board-sync worker (database mode; run alongside the app)
 npm run build   # production build
 npm run lint    # ESLint
 npm test        # Vitest unit tests for pure logic in lib/
@@ -31,6 +32,13 @@ npm run test:db                                         # integration tests (sep
 ```
 
 Full guide, including migrations, seeding rules, reset procedures, and the schema overview: [docs/database.md](docs/database.md).
+
+## Automatic board sync (Milestone 3B)
+
+With the app in database mode, run `npm run worker` in a second terminal. It syncs each enabled employer
+board at its check interval (default every 6 hours), retries temporary failures, and only marks a posting
+inactive after two consecutive complete syncs no longer list it. `npm run worker -- --once` syncs whatever
+is due and exits. Details and settings: [docs/ats-sync.md](docs/ats-sync.md#automatic-synchronization-milestone-3b).
 
 ## Structure
 

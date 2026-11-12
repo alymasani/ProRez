@@ -8,6 +8,8 @@ import {
   toApplication,
   toApplicationRun,
   toEmployerBoard,
+  toBoardSyncRun,
+  toJobSourceRecord,
   toApprovalRequest,
   toCoverLetter,
   toJobMatch,
@@ -102,8 +104,15 @@ export function createPrismaRepository(prisma: PrismaClient): DataRepository {
     },
 
     async listEmployerBoards() {
-      const rows = await prisma.employerBoard.findMany({ orderBy: [{ employerName: "asc" }, { provider: "asc" }] });
-      return rows.map(toEmployerBoard);
+      const [rows, running, active] = await Promise.all([
+        prisma.employerBoard.findMany({ orderBy: [{ employerName: "asc" }, { provider: "asc" }] }),
+        prisma.boardSyncRun.findMany({ where: { status: "running" }, select: { boardId: true } }),
+        // Active = currently listed sightings, one per job per board.
+        prisma.sourceObservation.groupBy({ by: ["boardId"], where: { boardId: { not: null }, closedAt: null }, _count: { _all: true } }),
+      ]);
+      const runningIds = new Set(running.map((r) => r.boardId));
+      const activeById = new Map(active.map((a) => [a.boardId, a._count._all]));
+      return rows.map((row) => toEmployerBoard(row, { syncing: runningIds.has(row.id), activeJobCount: activeById.get(row.id) ?? 0 }));
     },
 
     async getSearchProfile(id) {
@@ -114,6 +123,23 @@ export function createPrismaRepository(prisma: PrismaClient): DataRepository {
     async getProfileMatchForJob(jobId) {
       const row = await prisma.jobProfileEvaluation.findUnique({ where: { jobId }, include: evaluationInclude });
       return row ? toJobProfileMatch(row) : null;
+    },
+
+    async listBoardSyncRuns(limit = 5) {
+      const boards = await prisma.employerBoard.findMany({ select: { id: true } });
+      const runs = await Promise.all(
+        boards.map((b) => prisma.boardSyncRun.findMany({ where: { boardId: b.id }, orderBy: { startedAt: "desc" }, take: limit })),
+      );
+      return runs.flat().map(toBoardSyncRun).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    },
+
+    async listJobSightings(jobId) {
+      const rows = await prisma.sourceObservation.findMany({
+        where: { jobId },
+        include: { source: { select: { provider: true } }, board: { select: { employerName: true } } },
+        orderBy: [{ firstSeenAt: "asc" }, { id: "asc" }],
+      });
+      return rows.map(toJobSourceRecord);
     },
 
     async getDefaultPreferences() {

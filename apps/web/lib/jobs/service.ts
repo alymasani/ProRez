@@ -16,6 +16,7 @@
  *   so a saved job always has its evaluation.
  */
 import { createHash, randomUUID } from "node:crypto";
+import { mapJobLocation } from "@/lib/repositories/job-location";
 import type { Prisma, PrismaClient } from "../generated/prisma/client";
 import { reevaluateJobsInTx } from "../matching/persist";
 import { fail, prismaErrorCode, type MutationResult } from "../mutations/result";
@@ -68,7 +69,7 @@ async function loadCandidates(tx: Tx | PrismaClient, probe: DuplicateProbe, excl
     jobId: row.id,
     company: row.company,
     title: row.title,
-    locations: row.locations.map((l) => ({ city: l.city, province: l.province, arrangement: l.arrangement })),
+    locations: row.locations.map(mapJobLocation),
     discoveryStatus: row.discoveryStatus,
     dedupeKey: row.dedupeKey,
     canonicalUrls: row.observations.flatMap((o) => (o.canonicalUrl ? [o.canonicalUrl] : [])),

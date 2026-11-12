@@ -1,4 +1,8 @@
-/** Employer-board registry persistence. No polling happens here. */
+/**
+ * Employer-board registry persistence. Registering or enabling a real board
+ * schedules it for the background worker immediately (next_sync_at = now);
+ * disabling unschedules it. Demo boards are never scheduled.
+ */
 import type { PrismaClient } from "../generated/prisma/client";
 import { fail, prismaErrorCode, type MutationResult } from "../mutations/result";
 import { toEmployerBoard } from "../repositories/prisma-mappers";
@@ -13,7 +17,10 @@ export async function createBoard(
   options: { isDemo?: boolean } = {},
 ): Promise<MutationResult<EmployerBoard>> {
   try {
-    const row = await prisma.employerBoard.create({ data: { ...board, isDemo: options.isDemo ?? false } });
+    const isDemo = options.isDemo ?? false;
+    const row = await prisma.employerBoard.create({
+      data: { ...board, isDemo, nextSyncAt: board.enabled && !isDemo ? new Date() : null },
+    });
     return { ok: true, value: toEmployerBoard(row) };
   } catch (error) {
     if (prismaErrorCode(error) === "P2002") return fail("duplicate", DUPLICATE, { fieldErrors: { boardToken: DUPLICATE } });
@@ -26,7 +33,14 @@ export async function setBoardEnabled(
   id: string,
   enabled: boolean,
 ): Promise<MutationResult<EmployerBoard>> {
-  const updated = await prisma.employerBoard.updateMany({ where: { id }, data: { enabled } });
+  const current = await prisma.employerBoard.findUnique({ where: { id }, select: { isDemo: true } });
+  if (!current) return fail("not_found", "This board no longer exists.");
+  // Enabling (re)schedules now — this is also how a board paused by a
+  // configuration error is resumed; disabling stops automatic syncs.
+  const updated = await prisma.employerBoard.updateMany({
+    where: { id },
+    data: { enabled, nextSyncAt: enabled && !current.isDemo ? new Date() : null },
+  });
   if (updated.count === 0) return fail("not_found", "This board no longer exists.");
   return { ok: true, value: toEmployerBoard(await prisma.employerBoard.findUniqueOrThrow({ where: { id } })) };
 }

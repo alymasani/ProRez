@@ -12,6 +12,8 @@ import { createFixtureRepository } from "@/lib/repositories/fixture-repository";
 import type { DataRepository } from "@/lib/repositories/repository";
 import { resolveDataSource } from "@/lib/repositories/source";
 import type {
+  BoardSyncRun,
+  JobSourceRecord,
   Application,
   ApplicationEvent,
   ApplicationInterview,
@@ -135,6 +137,14 @@ export async function getProfileHistoryCounts(profileIds: readonly string[]): Pr
 
 export async function getEmployerBoards(): Promise<EmployerBoard[]> {
   return (await repository()).listEmployerBoards();
+}
+
+export async function getBoardSyncRuns(limit = 5): Promise<BoardSyncRun[]> {
+  return (await repository()).listBoardSyncRuns(limit);
+}
+
+export async function getJobSightings(jobId: string): Promise<JobSourceRecord[]> {
+  return (await repository()).listJobSightings(jobId);
 }
 
 export async function getDefaultPreferences(): Promise<SearchPreferences> {

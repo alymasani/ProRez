@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { DB_MODE } from "./db-reset";
 import { ROUTES, expectNoHorizontalOverflow, expectUniqueIds, trackErrors } from "./helpers";
 
 test.describe("every route", () => {
@@ -21,9 +22,13 @@ test.describe("every route", () => {
     await expect(page.getByText("Page not found")).toBeVisible();
   });
 
-  test("every page carries a visible demo-data notice", async ({ page }) => {
+  test("every page carries a visible data-mode notice that matches the mode", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/All data is fictional|Demo data only|Demo records are fictional|Demo data · edits save locally/).filter({ visible: true })).toBeVisible();
+    // Database mode must not call real records demo data (regression: real ATS jobs).
+    const expected = DB_MODE
+      ? /Only records marked Demo are fictional|records marked Demo are fictional/
+      : /All data is fictional|Demo data only/;
+    await expect(page.getByText(expected).filter({ visible: true })).toBeVisible();
   });
 });
 

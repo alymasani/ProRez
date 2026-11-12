@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const count = (page: Page) => page.getByText(/\d+ of 18 demo postings/);
+const count = (page: Page) => page.getByText(/\d+ of 18 postings/);
 const search = (page: Page) => page.getByRole("searchbox", { name: "Search jobs" });
 const results = (page: Page) => page.getByRole("region", { name: "Job results" }).getByRole("listitem");
 
@@ -16,10 +16,10 @@ async function filters(page: Page, isMobile: boolean) {
 test.describe("job discovery", () => {
   test("search narrows results and is written to the URL", async ({ page }) => {
     await page.goto("/jobs");
-    await expect(count(page)).toHaveText("16 of 18 demo postings");
+    await expect(count(page)).toHaveText("16 of 18 postings");
     await search(page).fill("montreal");
     await expect(page).toHaveURL(/[?&]q=montreal/);
-    await expect(count(page)).toHaveText("3 of 18 demo postings");
+    await expect(count(page)).toHaveText("3 of 18 postings");
     await expect(results(page).first()).toContainText(/Montréal/);
   });
 
@@ -31,7 +31,7 @@ test.describe("job discovery", () => {
     await panel.getByRole("checkbox", { name: "Remote" }).click();
     await expect(page).toHaveURL(/arrangement=remote/);
     if (isMobile) await page.keyboard.press("Escape");
-    await expect(count(page)).toHaveText("1 of 18 demo postings");
+    await expect(count(page)).toHaveText("1 of 18 postings");
     await expect(results(page)).toContainText(["Brightwater Learning"]);
 
     panel = await filters(page, isMobile);
@@ -39,14 +39,14 @@ test.describe("job discovery", () => {
     if (isMobile) await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Reset search & filters" }).first().click();
     await expect(page).toHaveURL(/\/jobs$/);
-    await expect(count(page)).toHaveText("16 of 18 demo postings");
+    await expect(count(page)).toHaveText("16 of 18 postings");
   });
 
   test("shows an empty state when nothing matches", async ({ page }) => {
     await page.goto("/jobs?q=zzzz-no-such-job");
     await expect(page.getByText("No jobs match these filters")).toBeVisible();
     await page.getByRole("button", { name: "Reset search & filters" }).last().click();
-    await expect(count(page)).toHaveText("16 of 18 demo postings");
+    await expect(count(page)).toHaveText("16 of 18 postings");
     await expect(search(page)).toHaveValue("");
   });
 
@@ -59,7 +59,7 @@ test.describe("job discovery", () => {
 
   test("filter state loads from a shared URL", async ({ page, isMobile }) => {
     await page.goto("/jobs?province=BC&type=new_grad");
-    await expect(count(page)).toHaveText("1 of 18 demo postings");
+    await expect(count(page)).toHaveText("1 of 18 postings");
     const panel = await filters(page, isMobile);
     await expect(panel.getByRole("checkbox", { name: "British Columbia" })).toBeChecked();
   });
@@ -85,7 +85,7 @@ test.describe("job discovery", () => {
       await page.goBack();
       await expect(page).toHaveURL(/q=toronto/);
       await expect(search(page)).toHaveValue("toronto");
-      await expect(count(page)).toHaveText("4 of 18 demo postings");
+      await expect(count(page)).toHaveText("4 of 18 postings");
 
       await page.goForward();
       await expect(search(page)).toHaveValue("halifax");
@@ -95,7 +95,7 @@ test.describe("job discovery", () => {
       await page.goto("/jobs");
       await search(page).fill("toronto");
       await expect(page).toHaveURL(/q=toronto/);
-      await expect(count(page)).toHaveText("4 of 18 demo postings");
+      await expect(count(page)).toHaveText("4 of 18 postings");
 
       // Navigate within the app to /jobs with no query.
       await page.getByRole("link", { name: "Add a job" }).filter({ visible: true }).first().click();
@@ -108,13 +108,13 @@ test.describe("job discovery", () => {
       }
       await expect(page).toHaveURL(/\/jobs$/);
       await expect(search(page)).toHaveValue("");
-      await expect(count(page)).toHaveText("16 of 18 demo postings");
+      await expect(count(page)).toHaveText("16 of 18 postings");
 
       await page.goBack(); // /jobs/new
       await page.goBack(); // /jobs?q=toronto
       await expect(page).toHaveURL(/q=toronto/);
       await expect(search(page)).toHaveValue("toronto");
-      await expect(count(page)).toHaveText("4 of 18 demo postings");
+      await expect(count(page)).toHaveText("4 of 18 postings");
     });
 
     test("a pending debounced search does not override back navigation", async ({ page }) => {
@@ -142,5 +142,5 @@ test("the include-inactive filter is labelled and works in the visible panel", a
   await expect(checkbox).toBeChecked();
   await expect(page).toHaveURL(/inactive=1/);
   if (isMobile) await page.keyboard.press("Escape");
-  await expect(count(page)).toHaveText("18 of 18 demo postings");
+  await expect(count(page)).toHaveText("18 of 18 postings");
 });

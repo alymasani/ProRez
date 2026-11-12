@@ -10,23 +10,26 @@ import { getMutationAvailability } from "@/lib/auth/server-actor";
 function modeNotice() {
   return getMutationAvailability().enabled
     ? {
-        long: "Demo records are fictional. Profiles and boards save to your local database; nothing is sent or submitted.",
-        short: "Demo data · edits save locally · nothing is sent or submitted.",
+        title: "Local database",
+        long: "Changes save to your local database. Only records marked Demo are fictional; nothing is sent or submitted.",
+        short: "Local database · records marked Demo are fictional · nothing is sent or submitted.",
       }
     : {
+        title: "Demo mode",
         long: "All data is fictional. Nothing is saved, sent, or submitted.",
         short: "Demo data only — nothing is saved or submitted.",
       };
 }
 
 function DemoModeNote() {
+  const notice = modeNotice();
   return (
     <div className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-900 dark:text-amber-200">
       <p className="flex items-center gap-1.5 font-medium">
         <FlaskConical className="size-3.5" aria-hidden="true" />
-        Demo mode
+        {notice.title}
       </p>
-      <p className="mt-1 text-amber-900/75 dark:text-amber-200/75">{modeNotice().long}</p>
+      <p className="mt-1 text-amber-900/75 dark:text-amber-200/75">{notice.long}</p>
     </div>
   );
 }

@@ -29,6 +29,8 @@ export default defineConfig({
     env: {
       PROREZ_DATA_SOURCE: "database",
       PROREZ_LOCAL_MUTATIONS: "enabled",
+      // Board syncs read recorded responses from e2e/fixtures/ats — never the network.
+      PROREZ_ATS_TRANSPORT: "fixtures",
       DATABASE_URL: process.env.E2E_DATABASE_URL ?? "",
     },
   },

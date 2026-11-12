@@ -180,13 +180,25 @@ export async function seedDemoData(prisma: PrismaClient): Promise<SeedSummary> {
       }
 
       await tx.employerBoard.createMany({
-        data: DEMO_EMPLOYER_BOARDS.map(({ lastCheckedAt, lastSuccessAt, lastErrorAt, createdAt, updatedAt, ...b }) => ({
-          ...b,
-          lastCheckedAt: dOrNull(lastCheckedAt),
-          lastSuccessAt: dOrNull(lastSuccessAt),
-          lastErrorAt: dOrNull(lastErrorAt),
-          createdAt: d(createdAt),
-          updatedAt: d(updatedAt),
+        // Stored columns only (`syncing`/`activeJobCount` are derived); demo boards are never scheduled.
+        data: DEMO_EMPLOYER_BOARDS.map((b) => ({
+          id: b.id,
+          provider: b.provider,
+          employerName: b.employerName,
+          boardToken: b.boardToken,
+          boardUrl: b.boardUrl,
+          enabled: b.enabled,
+          pollIntervalMinutes: b.pollIntervalMinutes,
+          consecutiveFailures: b.consecutiveFailures,
+          lastErrorMessage: b.lastErrorMessage,
+          lastErrorCode: b.lastErrorCode,
+          isDemo: b.isDemo,
+          nextSyncAt: null,
+          lastCheckedAt: dOrNull(b.lastCheckedAt),
+          lastSuccessAt: dOrNull(b.lastSuccessAt),
+          lastErrorAt: dOrNull(b.lastErrorAt),
+          createdAt: d(b.createdAt),
+          updatedAt: d(b.updatedAt),
         })),
       });
 

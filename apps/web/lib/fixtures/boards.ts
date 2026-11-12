@@ -1,6 +1,7 @@
 /**
  * DEMO FIXTURES — employer boards for fictional companies. Tokens are made up;
- * nothing is ever fetched from these URLs (polling does not exist yet).
+ * nothing is ever fetched from these URLs, and demo boards are never scheduled
+ * for automatic syncing.
  */
 import type { EmployerBoard } from "@/lib/types";
 
@@ -10,6 +11,10 @@ function board(b: Pick<EmployerBoard, "id" | "provider" | "employerName" | "boar
   return {
     enabled: true,
     pollIntervalMinutes: 360,
+    nextSyncAt: null,
+    syncing: false,
+    activeJobCount: 0,
+    lastErrorCode: null,
     lastCheckedAt: null,
     lastSuccessAt: null,
     consecutiveFailures: 0,

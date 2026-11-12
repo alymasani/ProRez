@@ -168,8 +168,7 @@ export function JobsExplorer({ items }: { items: JobWithMatch[] }) {
 
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p aria-live="polite" className="text-muted-foreground">
-            <span className="font-medium text-foreground">{results.length}</span> of {items.length} demo
-            postings
+            <span className="font-medium text-foreground">{results.length}</span> of {items.length} postings
             {isPending ? <span className="ml-2 text-xs">Updating…</span> : null}
           </p>
           {hasAnyConstraint ? (

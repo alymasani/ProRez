@@ -27,3 +27,20 @@ export function formatPollInterval(minutes: number): string {
   if (minutes % 60 === 0) return `every ${minutes / 60} hour${minutes === 60 ? "" : "s"}`;
   return `every ${minutes} minutes`;
 }
+
+/** Display state for the boards page. */
+export type BoardSyncState = "disabled" | "demo" | "running" | "scheduled" | "retrying" | "paused";
+
+export function boardSyncState(board: {
+  enabled: boolean;
+  isDemo: boolean;
+  nextSyncAt: string | null;
+  running: boolean;
+  consecutiveFailures: number;
+}): BoardSyncState {
+  if (!board.enabled) return "disabled";
+  if (board.running) return "running";
+  if (board.isDemo) return "demo";
+  if (!board.nextSyncAt) return "paused";
+  return board.consecutiveFailures > 0 ? "retrying" : "scheduled";
+}
