@@ -4,6 +4,20 @@ import { Brand } from "@/components/layout/brand";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { NavLinks } from "@/components/layout/nav";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { getMutationAvailability } from "@/lib/auth/server-actor";
+
+/** Accurate for the running mode: database mode with saving enabled does persist edits. */
+function modeNotice() {
+  return getMutationAvailability().enabled
+    ? {
+        long: "Demo records are fictional. Profiles and boards save to your local database; nothing is sent or submitted.",
+        short: "Demo data · edits save locally · nothing is sent or submitted.",
+      }
+    : {
+        long: "All data is fictional. Nothing is saved, sent, or submitted.",
+        short: "Demo data only — nothing is saved or submitted.",
+      };
+}
 
 function DemoModeNote() {
   return (
@@ -12,9 +26,7 @@ function DemoModeNote() {
         <FlaskConical className="size-3.5" aria-hidden="true" />
         Demo mode
       </p>
-      <p className="mt-1 text-amber-900/75 dark:text-amber-200/75">
-        All data is fictional. Nothing is saved, sent, or submitted.
-      </p>
+      <p className="mt-1 text-amber-900/75 dark:text-amber-200/75">{modeNotice().long}</p>
     </div>
   );
 }
@@ -54,7 +66,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className="flex items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/[0.07] px-4 py-1.5 text-center text-xs text-amber-900 lg:hidden dark:text-amber-200"
         >
           <FlaskConical className="size-3.5 shrink-0" aria-hidden="true" />
-          Demo data only — nothing is saved or submitted.
+          {modeNotice().short}
         </div>
 
         <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">

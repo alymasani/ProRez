@@ -1,12 +1,31 @@
 /**
- * Pure helpers for the search-profile configuration form. Validation only —
- * profile evaluation against jobs is a future milestone.
+ * Pure helpers for the search-profile form. `validateProfileDraft` runs in the
+ * browser for instant feedback AND on the server (lib/profiles/schema.ts)
+ * after strict structural parsing, so both sides apply identical rules.
  */
-import type { SearchProfile, SearchProfileDraft } from "../types";
+import type { AppSettings, SearchProfile, SearchProfileDraft } from "../types";
 
-export type ProfileDraftErrors = Partial<
-  Record<"name" | "jobTypes" | "durations" | "minFitScore" | "maxYearsExperience" | "titleKeywords", string>
->;
+export const PROFILE_LIMITS = {
+  nameMax: 60,
+  descriptionMax: 500,
+  keywordMax: 100,
+  keywordsPerList: 50,
+  maxYears: 15,
+} as const;
+
+export type ProfileDraftField =
+  | "name"
+  | "description"
+  | "jobTypes"
+  | "durations"
+  | "minFitScore"
+  | "maxYearsExperience"
+  | "titleKeywords"
+  | "excludedTitleKeywords"
+  | "includeKeywords"
+  | "excludeKeywords";
+
+export type ProfileDraftErrors = Partial<Record<ProfileDraftField, string>>;
 
 export function emptyProfileDraft(): SearchProfileDraft {
   return {
@@ -16,6 +35,8 @@ export function emptyProfileDraft(): SearchProfileDraft {
     criteria: {
       titleKeywords: [],
       excludedTitleKeywords: [],
+      includeKeywords: [],
+      excludeKeywords: [],
       disciplines: [],
       jobTypes: [],
       durations: [],
@@ -31,15 +52,46 @@ export function emptyProfileDraft(): SearchProfileDraft {
   };
 }
 
+/** A new profile pre-filled from the saved default settings (Settings page). */
+export function draftFromSettings(settings: AppSettings): SearchProfileDraft {
+  const draft = emptyProfileDraft();
+  const s = settings.search;
+  const termTypes = s.jobTypes.length === 0 || s.jobTypes.includes("internship") || s.jobTypes.includes("co_op");
+  return {
+    ...draft,
+    criteria: {
+      ...draft.criteria,
+      provinces: [...s.provinces],
+      arrangements: [...s.arrangements],
+      jobTypes: [...s.jobTypes],
+      durations: termTypes ? [...s.durations] : [],
+      disciplines: [...s.disciplines],
+      includeRemoteCanadaWide: s.includeRemoteCanadaWide,
+    },
+    notifications: { ...draft.notifications, cadence: settings.notifications.defaultCadence },
+    automationMode: settings.workflow.defaultAutomationMode,
+  };
+}
+
+/** Deep copy so editing a draft never mutates the source profile. */
 export function draftFromProfile(profile: SearchProfile): SearchProfileDraft {
+  const c = profile.criteria;
   return {
     name: profile.name,
     description: profile.description,
     enabled: profile.enabled,
     criteria: {
-      ...profile.criteria,
-      titleKeywords: [...profile.criteria.titleKeywords],
-      excludedTitleKeywords: [...profile.criteria.excludedTitleKeywords],
+      ...c,
+      titleKeywords: [...c.titleKeywords],
+      excludedTitleKeywords: [...c.excludedTitleKeywords],
+      includeKeywords: [...c.includeKeywords],
+      excludeKeywords: [...c.excludeKeywords],
+      disciplines: [...c.disciplines],
+      jobTypes: [...c.jobTypes],
+      durations: [...c.durations],
+      provinces: [...c.provinces],
+      arrangements: [...c.arrangements],
+      experienceLevels: [...c.experienceLevels],
     },
     minFitScore: profile.minFitScore,
     notifications: { ...profile.notifications },
@@ -68,15 +120,33 @@ export function parseKeywordList(raw: string): string[] {
   return result;
 }
 
+function overlap(a: readonly string[], b: readonly string[]): string | undefined {
+  const lower = new Set(a.map((k) => k.toLowerCase()));
+  return b.find((k) => lower.has(k.toLowerCase()));
+}
+
+function keywordListError(list: readonly string[]): string | undefined {
+  if (list.length > PROFILE_LIMITS.keywordsPerList) return `Use at most ${PROFILE_LIMITS.keywordsPerList} keywords.`;
+  const tooLong = list.find((k) => k.length > PROFILE_LIMITS.keywordMax);
+  if (tooLong) return `Keywords must be ${PROFILE_LIMITS.keywordMax} characters or fewer.`;
+  return undefined;
+}
+
 export function validateProfileDraft(draft: SearchProfileDraft): ProfileDraftErrors {
   const errors: ProfileDraftErrors = {};
+  const c = draft.criteria;
+
   const name = draft.name.trim();
   if (!name) errors.name = "Give this profile a name.";
-  else if (name.length > 60) errors.name = "Keep the name under 60 characters.";
+  else if (name.length > PROFILE_LIMITS.nameMax) errors.name = `Keep the name under ${PROFILE_LIMITS.nameMax} characters.`;
 
-  if (draft.criteria.jobTypes.length === 0) errors.jobTypes = "Select at least one employment type.";
+  if (draft.description.length > PROFILE_LIMITS.descriptionMax) {
+    errors.description = `Keep the description under ${PROFILE_LIMITS.descriptionMax} characters.`;
+  }
 
-  if (!durationApplies(draft) && draft.criteria.durations.length > 0) {
+  if (c.jobTypes.length === 0) errors.jobTypes = "Select at least one employment type.";
+
+  if (!durationApplies(draft) && c.durations.length > 0) {
     errors.durations = "Durations only apply to internships and co-ops.";
   }
 
@@ -84,14 +154,26 @@ export function validateProfileDraft(draft: SearchProfileDraft): ProfileDraftErr
     errors.minFitScore = "Minimum fit score must be a whole number from 0 to 100.";
   }
 
-  const years = draft.criteria.maxYearsExperience;
-  if (years !== null && (!Number.isInteger(years) || years < 0 || years > 15)) {
-    errors.maxYearsExperience = "Use a whole number of years from 0 to 15, or leave blank.";
+  const years = c.maxYearsExperience;
+  if (years !== null && (!Number.isInteger(years) || years < 0 || years > PROFILE_LIMITS.maxYears)) {
+    errors.maxYearsExperience = `Use a whole number of years from 0 to ${PROFILE_LIMITS.maxYears}, or leave blank.`;
   }
 
-  const lowerInclude = new Set(draft.criteria.titleKeywords.map((k) => k.toLowerCase()));
-  const overlap = draft.criteria.excludedTitleKeywords.find((k) => lowerInclude.has(k.toLowerCase()));
-  if (overlap) errors.titleKeywords = `"${overlap}" is both included and excluded.`;
+  const lists = {
+    titleKeywords: c.titleKeywords,
+    excludedTitleKeywords: c.excludedTitleKeywords,
+    includeKeywords: c.includeKeywords,
+    excludeKeywords: c.excludeKeywords,
+  } as const;
+  for (const [field, list] of Object.entries(lists) as [keyof typeof lists, string[]][]) {
+    const error = keywordListError(list);
+    if (error) errors[field] = error;
+  }
+
+  const titleConflict = overlap(c.titleKeywords, c.excludedTitleKeywords);
+  if (titleConflict) errors.titleKeywords = `"${titleConflict}" is both included and excluded.`;
+  const keywordConflict = overlap(c.includeKeywords, c.excludeKeywords);
+  if (keywordConflict) errors.includeKeywords = `"${keywordConflict}" is both preferred and excluded.`;
 
   return errors;
 }

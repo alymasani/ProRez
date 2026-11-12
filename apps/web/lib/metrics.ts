@@ -25,11 +25,11 @@ export function computeOverviewMetrics(
   return {
     totalDiscovered: jobs.length,
     newMatching: jobs.filter(
-      ({ job, match }) => job.discoveryStatus === "new" && (match?.fitScore ?? 0) >= MATCH_THRESHOLD,
+      ({ job, match }) => job.discoveryStatus === "discovered" && (match?.fitScore ?? 0) >= MATCH_THRESHOLD,
     ).length,
     pendingApprovals: approvals.filter((a) => a.decision === "pending").length,
     preparedNotSubmitted: applications.filter(
-      (a) => a.preparationStatus === "prepared" && a.submissionStatus === "not_submitted",
+      (a) => a.preparationStatus === "ready_for_review" && a.submissionStatus === "not_submitted",
     ).length,
     submitted: applications.filter((a) => a.submittedAt !== null).length,
   };

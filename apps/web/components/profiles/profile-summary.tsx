@@ -3,7 +3,7 @@ import {
   ARRANGEMENT_LABELS,
   AUTOMATION_MODE_LABELS,
   DISCIPLINE_LABELS,
-  DURATION_LABELS,
+  DURATION_REQUIREMENT_LABELS,
   EXPERIENCE_LEVEL_LABELS,
   JOB_TYPE_LABELS,
   NOTIFICATION_CADENCE_LABELS,
@@ -26,7 +26,7 @@ export function ProfileSummary({ draft, compact = false }: { draft: SearchProfil
   const rows: [string, ReactNode][] = [
     ["Employment", list(c.jobTypes.map((t) => JOB_TYPE_LABELS[t]), "None selected")],
     ...(durationApplies(draft)
-      ? ([["Duration", list(c.durations.map((d) => DURATION_LABELS[d]))]] as [string, ReactNode][])
+      ? ([["Duration", list(c.durations.map((d) => DURATION_REQUIREMENT_LABELS[d].label))]] as [string, ReactNode][])
       : []),
     ["Locations", locations],
     ["Arrangement", list(c.arrangements.map((a) => ARRANGEMENT_LABELS[a]))],

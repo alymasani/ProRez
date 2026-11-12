@@ -9,9 +9,12 @@
 import { DEMO_APPLICATION_RUNS, DEMO_APPLICATIONS, DEMO_APPROVALS } from "../fixtures/applications";
 import { DEMO_COVER_LETTERS, DEMO_PROJECTS, DEMO_RESUMES } from "../fixtures/artifacts";
 import { DEMO_JOB_MATCHES, DEMO_JOB_SOURCES, DEMO_JOBS } from "../fixtures/jobs";
-import { DEMO_JOB_PROFILE_MATCHES, DEMO_SEARCH_PROFILES } from "../fixtures/profiles";
+import { DEMO_EMPLOYER_BOARDS } from "../fixtures/boards";
+import { DEMO_EVALUATED_AT, DEMO_SEARCH_PROFILES } from "../fixtures/profiles";
 import type { PrismaClient } from "../generated/prisma/client";
 import { buildDedupeKey } from "../jobs/dedupe";
+import { reevaluateAllJobs } from "../matching/persist";
+import { profileSnapshot } from "../profiles/service";
 import { durationToDb } from "../repositories/prisma-mappers";
 
 const d = (iso: string) => new Date(iso);
@@ -36,6 +39,8 @@ export interface SeedSummary {
   projects: number;
   runs: number;
   approvals: number;
+  boards: number;
+  jobsWithProfileMatches: number;
 }
 
 export async function deleteDemoData(prisma: PrismaClient): Promise<void> {
@@ -46,7 +51,10 @@ export async function deleteDemoData(prisma: PrismaClient): Promise<void> {
     await tx.resumeArtifact.deleteMany({ where: { isDemo: true } });
     await tx.coverLetterArtifact.deleteMany({ where: { isDemo: true } });
     await tx.project.deleteMany({ where: { isDemo: true } });
+    await tx.employerBoard.deleteMany({ where: { isDemo: true } });
     await tx.jobProfileEvaluation.deleteMany({ where: { isDemo: true } });
+    // Matches by non-demo evaluations would block this; demo profiles only ever match via demo data.
+    await tx.searchProfileVersion.deleteMany({ where: { profile: { isDemo: true } } });
     await tx.searchProfile.deleteMany({ where: { isDemo: true } });
     await tx.jobPosting.deleteMany({ where: { isDemo: true } });
   });
@@ -55,7 +63,7 @@ export async function deleteDemoData(prisma: PrismaClient): Promise<void> {
 export async function seedDemoData(prisma: PrismaClient): Promise<SeedSummary> {
   await deleteDemoData(prisma);
 
-  return prisma.$transaction(
+  const summary = await prisma.$transaction(
     async (tx) => {
       for (const s of DEMO_JOB_SOURCES) {
         const data = {
@@ -89,7 +97,17 @@ export async function seedDemoData(prisma: PrismaClient): Promise<SeedSummary> {
             postedAt: dOrNull(job.postedAt),
             firstDiscoveredAt: d(job.discoveredAt),
             discoveryStatus: job.discoveryStatus,
+            origin: job.origin,
             primarySourceId: job.sourceId,
+            description: job.description,
+            experienceRequirement: job.experienceRequirement,
+            salaryMin: job.salary?.min,
+            salaryMax: job.salary?.max,
+            salaryCurrency: job.salary?.currency,
+            salaryPeriod: job.salary?.period,
+            notes: job.notes,
+            createdAt: d(job.createdAt),
+            updatedAt: d(job.updatedAt),
             isDemo: true,
             locations: {
               create: job.locations.map((l, position) => ({ position, ...l })),
@@ -135,9 +153,13 @@ export async function seedDemoData(prisma: PrismaClient): Promise<SeedSummary> {
       });
 
       for (const p of DEMO_SEARCH_PROFILES) {
+        const { id: _id, version: _v, archivedAt: _a, createdAt: _c, updatedAt: _u, isDemo: _d, ...draft } = p;
+        void [_id, _v, _a, _c, _u, _d];
         await tx.searchProfile.create({
           data: {
             id: p.id,
+            version: p.version,
+            archivedAt: dOrNull(p.archivedAt),
             name: p.name,
             description: p.description,
             enabled: p.enabled,
@@ -152,21 +174,21 @@ export async function seedDemoData(prisma: PrismaClient): Promise<SeedSummary> {
             criteria: {
               create: { ...p.criteria, durations: p.criteria.durations.map(durationToDb) },
             },
+            versions: { create: { version: p.version, snapshot: profileSnapshot(draft), createdAt: d(p.updatedAt) } },
           },
         });
       }
 
-      for (const m of DEMO_JOB_PROFILE_MATCHES) {
-        await tx.jobProfileEvaluation.create({
-          data: {
-            jobId: m.jobId,
-            evaluatedAt: d(m.evaluatedAt),
-            notifiedAt: dOrNull(m.notifiedAt),
-            isDemo: true,
-            matches: { create: m.matchedProfileIds.map((profileId, rank) => ({ profileId, rank })) },
-          },
-        });
-      }
+      await tx.employerBoard.createMany({
+        data: DEMO_EMPLOYER_BOARDS.map(({ lastCheckedAt, lastSuccessAt, lastErrorAt, createdAt, updatedAt, ...b }) => ({
+          ...b,
+          lastCheckedAt: dOrNull(lastCheckedAt),
+          lastSuccessAt: dOrNull(lastSuccessAt),
+          lastErrorAt: dOrNull(lastErrorAt),
+          createdAt: d(createdAt),
+          updatedAt: d(updatedAt),
+        })),
+      });
 
       for (const p of DEMO_PROJECTS) {
         await tx.project.create({
@@ -300,8 +322,15 @@ export async function seedDemoData(prisma: PrismaClient): Promise<SeedSummary> {
         projects: DEMO_PROJECTS.length,
         runs: DEMO_APPLICATION_RUNS.length,
         approvals: DEMO_APPROVALS.length,
+        boards: DEMO_EMPLOYER_BOARDS.length,
+        jobsWithProfileMatches: 0,
       };
     },
     { timeout: 30_000 },
   );
+
+  // Profile matches come from the real engine, at the fixed demo timestamp so
+  // the database returns exactly what fixture mode computes.
+  const run = await reevaluateAllJobs(prisma, { evaluatedAt: DEMO_EVALUATED_AT });
+  return { ...summary, jobsWithProfileMatches: run.jobsWithMatches };
 }

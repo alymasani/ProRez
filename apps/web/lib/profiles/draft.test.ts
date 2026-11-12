@@ -60,13 +60,13 @@ describe("validateProfileDraft", () => {
 });
 
 describe("demo profile matches", () => {
-  it("never has more than one record per job (dedup contract)", async () => {
-    const { DEMO_JOB_PROFILE_MATCHES } = await import("../fixtures/profiles");
-    const jobIds = DEMO_JOB_PROFILE_MATCHES.map((m) => m.jobId);
+  it("never has more than one canonical record per job", async () => {
+    const [{ DEMO_JOBS }, { DEMO_SEARCH_PROFILES, DEMO_EVALUATED_AT }, { evaluateJobs }, { buildDedupeKey }] = await Promise.all([
+      import("../fixtures/jobs"), import("../fixtures/profiles"), import("../matching/evaluate"), import("../jobs/dedupe"),
+    ]);
+    const matches = evaluateJobs(DEMO_JOBS.map((job) => ({ job, dedupeKey: buildDedupeKey(job.company, job.title, job.locations[0] ?? null) })), DEMO_SEARCH_PROFILES, DEMO_EVALUATED_AT);
+    const jobIds = matches.map((match) => match.jobId);
     expect(new Set(jobIds).size).toBe(jobIds.length);
-    for (const m of DEMO_JOB_PROFILE_MATCHES) {
-      expect(m.matchedProfileIds[0]).toBe(m.primaryProfileId);
-      expect(m.notifiedAt).toBeNull();
-    }
+    for (const match of matches.filter((item) => item.matches.length > 0)) expect(match.matches[0].rank).toBe(0);
   });
 });

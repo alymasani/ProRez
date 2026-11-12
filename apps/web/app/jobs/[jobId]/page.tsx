@@ -5,6 +5,7 @@ import { ArrowLeft, Check, ListFilter, Minus } from "lucide-react";
 import { FitScore } from "@/components/fit-score";
 import { FutureAction } from "@/components/future-action";
 import { PageHeader } from "@/components/page-header";
+import { JobManagement } from "@/components/jobs/job-management";
 import { PreviewNotice } from "@/components/states";
 import { DemoBadge, StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +16,7 @@ import {
   getJobSources,
   getJobWithMatch,
   getProfileMatchForJob,
-  getSearchProfiles,
+  getSearchProfile,
 } from "@/lib/data";
 import { formatDate, formatDateTime, formatDuration, formatLocation } from "@/lib/format";
 import {
@@ -28,6 +29,8 @@ import {
   SOURCE_PROVIDER_LABELS,
   SUBMISSION_STATUS,
 } from "@/lib/labels";
+import { mutationsConfigured } from "@/lib/auth/mutation-guard";
+import { resolveDataSource } from "@/lib/repositories/source";
 
 export async function generateMetadata({ params }: PageProps<"/jobs/[jobId]">): Promise<Metadata> {
   const { jobId } = await params;
@@ -50,14 +53,18 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
   if (!item) notFound();
 
   const { job, match } = item;
-  const [sources, application, profileMatch, profiles] = await Promise.all([
+  const [sources, application, profileMatch] = await Promise.all([
     getJobSources(),
     getApplicationForJob(job.id),
     getProfileMatchForJob(job.id),
-    getSearchProfiles(),
   ]);
   const source = sources.find((s) => s.id === job.sourceId) ?? null;
-  const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  // Look up each matched profile individually so archived ones still resolve.
+  const matchedProfiles = profileMatch
+    ? await Promise.all(profileMatch.entries.map((e) => getSearchProfile(e.profileId)))
+    : [];
+  const profilesById = new Map(matchedProfiles.filter((p) => p !== null).map((p) => [p.id, p]));
+  const mutation = mutationsConfigured({ dataSource: resolveDataSource(process.env), localMutations: process.env.PROREZ_LOCAL_MUTATIONS });
 
   return (
     <div className="space-y-6">
@@ -93,6 +100,7 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
+          <JobManagement job={job} application={application} writable={mutation.enabled} readOnlyReason={mutation.reason} />
           <Card>
             <CardHeader>
               <CardTitle>About the role</CardTitle>
@@ -212,31 +220,58 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
             <CardHeader>
               <CardTitle>Matching search profiles</CardTitle>
               <CardDescription>
-                One record per job, even when several profiles match — so it produces a single notification.
+                One canonical result per job, even when several profiles match — so it produces a single notification.
               </CardDescription>
             </CardHeader>
             <CardContent>
               {profileMatch ? (
-                <ul className="space-y-2">
-                  {profileMatch.matchedProfileIds.map((id) => {
-                    const profile = profilesById.get(id);
+                <ul className="space-y-3">
+                  {profileMatch.entries.map((entry) => {
+                    const profile = profilesById.get(entry.profileId);
                     return (
-                      <li key={id} className="flex items-center justify-between gap-2 text-sm">
-                        <Link href={`/profiles/${id}`} className="flex min-w-0 items-center gap-2 hover:underline">
-                          <ListFilter className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                          <span className="truncate">{profile?.name ?? id}</span>
-                        </Link>
-                        {id === profileMatch.primaryProfileId ? <Badge variant="info">Primary</Badge> : null}
+                      <li key={entry.profileId} className="space-y-1.5 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <Link
+                            href={`/profiles/${entry.profileId}`}
+                            className="flex min-w-0 items-center gap-2 font-medium hover:underline"
+                          >
+                            <ListFilter className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                            <span className="truncate">{profile?.name ?? entry.profileId}</span>
+                          </Link>
+                          <span className="flex shrink-0 gap-1">
+                            {entry.rank === 0 ? <Badge variant="info">Primary</Badge> : null}
+                            <StatusBadge
+                              meta={
+                                entry.status === "eligible"
+                                  ? { label: "Eligible", tone: "success" }
+                                  : { label: "Needs review", tone: "warning" }
+                              }
+                              srPrefix="Match status:"
+                            />
+                          </span>
+                        </div>
+                        <ul className="list-disc space-y-0.5 pl-6 text-xs text-muted-foreground">
+                          {entry.reasons.map((r) => (
+                            <li key={r}>{r}</li>
+                          ))}
+                        </ul>
+                        <p className="pl-6 text-xs text-muted-foreground">
+                          Evaluated against v{entry.profileVersion}
+                          {entry.relevance !== null ? ` · relevance ${entry.relevance}/100` : ""}
+                          {profile?.archivedAt ? " · profile archived" : ""}
+                        </p>
                       </li>
                     );
                   })}
-                  <li className="pt-1 text-xs text-muted-foreground">
-                    Illustrative demo record. Notification: not sent (Telegram is not connected).
+                  <li className="border-t pt-2 text-xs text-muted-foreground">
+                    Rules {profileMatch.engineVersion} · evaluated {formatDateTime(profileMatch.evaluatedAt)}. Notification:{" "}
+                    {profileMatch.notifiedAt ? `sent ${formatDateTime(profileMatch.notifiedAt)}` : "not sent (Telegram is not connected)"}.
+                    Relevance ranks profiles; it is not the candidate-fit score.
                   </li>
                 </ul>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  No demo profile-match record for this job. Profile evaluation arrives in a later milestone.
+                  No enabled search profile matches this job{job.discoveryStatus === "dismissed" || job.discoveryStatus === "expired" ? " (inactive postings are not evaluated)" : ""}.
                 </p>
               )}
             </CardContent>

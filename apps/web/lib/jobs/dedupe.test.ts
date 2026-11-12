@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_JOB_PROFILE_MATCHES } from "../fixtures/profiles";
 import { DEMO_JOBS } from "../fixtures/jobs";
 import { buildDedupeKey, slugify } from "./dedupe";
 
@@ -39,11 +38,13 @@ describe("buildDedupeKey", () => {
     expect(() => buildDedupeKey("Acme", " ", null)).toThrow();
   });
 
-  it("matches the keys recorded in the demo profile-match fixtures", () => {
-    for (const match of DEMO_JOB_PROFILE_MATCHES) {
-      const job = DEMO_JOBS.find((j) => j.id === match.jobId)!;
-      expect(buildDedupeKey(job.company, job.title, job.locations[0] ?? null)).toBe(match.dedupeKey);
-    }
+  it("produces the documented key format for demo jobs", () => {
+    const keyFor = (id: string) => {
+      const job = DEMO_JOBS.find((j) => j.id === id)!;
+      return buildDedupeKey(job.company, job.title, job.locations[0] ?? null);
+    };
+    expect(keyFor("job-001")).toBe("northlight-robotics|software-engineering-intern-embedded-systems|waterloo-on");
+    expect(keyFor("job-006")).toBe("glacier-labs|machine-learning-intern|montreal-qc");
   });
 
   it("gives every demo job a distinct key", () => {

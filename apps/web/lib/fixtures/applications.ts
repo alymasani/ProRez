@@ -2,14 +2,20 @@
  * DEMO FIXTURES — fictional applications, runs, and approvals.
  * Submission statuses here are illustrative; ProRez has not submitted anything.
  */
-import type { Application, ApplicationRun, ApprovalRequest } from "@/lib/types";
+import type {
+  Application,
+  ApplicationEvent,
+  ApplicationInterview,
+  ApplicationRun,
+  ApprovalRequest,
+} from "@/lib/types";
 
 export const DEMO_APPLICATIONS: Application[] = [
   {
     id: "app-001",
     jobId: "job-003",
     mode: "full_build",
-    preparationStatus: "prepared",
+    preparationStatus: "ready_for_review",
     submissionStatus: "submitted",
     submittedAt: "2026-11-02T18:30:00Z",
     resumeId: "res-003",
@@ -24,7 +30,7 @@ export const DEMO_APPLICATIONS: Application[] = [
     id: "app-002",
     jobId: "job-015",
     mode: "full_build",
-    preparationStatus: "needs_review",
+    preparationStatus: "ready_for_review",
     submissionStatus: "not_submitted",
     submittedAt: null,
     resumeId: "res-004",
@@ -39,7 +45,7 @@ export const DEMO_APPLICATIONS: Application[] = [
     id: "app-003",
     jobId: "job-007",
     mode: "quick_apply",
-    preparationStatus: "prepared",
+    preparationStatus: "ready_for_review",
     submissionStatus: "not_submitted",
     submittedAt: null,
     resumeId: "res-005",
@@ -69,7 +75,7 @@ export const DEMO_APPLICATIONS: Application[] = [
     id: "app-005",
     jobId: "job-004",
     mode: "quick_apply",
-    preparationStatus: "prepared",
+    preparationStatus: "ready_for_review",
     submissionStatus: "interviewing",
     submittedAt: "2026-10-21T16:00:00Z",
     resumeId: "res-001",
@@ -84,7 +90,7 @@ export const DEMO_APPLICATIONS: Application[] = [
     id: "app-006",
     jobId: "job-016",
     mode: "quick_apply",
-    preparationStatus: "prepared",
+    preparationStatus: "ready_for_review",
     submissionStatus: "rejected",
     submittedAt: "2026-10-14T20:00:00Z",
     resumeId: "res-002",
@@ -214,4 +220,71 @@ export const DEMO_APPROVALS: ApprovalRequest[] = [
   { id: "apr-006", jobId: "job-015", channel: "dashboard", decision: "full_build", requestedAt: "2026-10-27T14:05:00Z", respondedAt: "2026-10-28T08:55:00Z", isDemo: true },
   { id: "apr-007", jobId: "job-007", channel: "dashboard", decision: "quick_apply", requestedAt: "2026-10-29T15:45:00Z", respondedAt: "2026-10-30T11:58:00Z", isDemo: true },
   { id: "apr-008", jobId: "job-011", channel: "dashboard", decision: "skip", requestedAt: "2026-10-16T12:15:00Z", respondedAt: "2026-10-16T18:00:00Z", isDemo: true },
+];
+
+const eventId = (n: number) => `00000000-0000-4000-8000-0054${n.toString(16).padStart(8, "0")}`;
+
+/**
+ * Application history: one "created" event per application, a "recorded"
+ * event for each recorded application date, and the interview for app-005.
+ */
+export const DEMO_APPLICATION_EVENTS: ApplicationEvent[] = [
+  ...DEMO_APPLICATIONS.flatMap((a, i): ApplicationEvent[] => [
+    {
+      id: eventId(i * 10 + 1),
+      applicationId: a.id,
+      type: "created",
+      fromValue: null,
+      toValue: a.mode,
+      message: "Started tracking this application.",
+      occurredAt: a.createdAt,
+      isDemo: true,
+    },
+    ...(a.submittedAt
+      ? [
+          {
+            id: eventId(i * 10 + 2),
+            applicationId: a.id,
+            type: "submission_recorded" as const,
+            fromValue: "not_submitted",
+            toValue: "submitted",
+            message: "Recorded by the user (demo).",
+            occurredAt: a.submittedAt,
+            isDemo: true,
+          },
+        ]
+      : []),
+  ]),
+  {
+    id: eventId(1001),
+    applicationId: "app-005",
+    type: "interview_recorded",
+    fromValue: null,
+    toValue: "recruiter_screen",
+    message: "On 2026-11-04.",
+    occurredAt: "2026-11-05T13:00:00Z",
+    isDemo: true,
+  },
+  {
+    id: eventId(1002),
+    applicationId: "app-005",
+    type: "submission_status_changed",
+    fromValue: "submitted",
+    toValue: "interviewing",
+    message: "Moved to Interviewing when the first interview was recorded.",
+    occurredAt: "2026-11-05T13:00:00.001Z",
+    isDemo: true,
+  },
+];
+
+export const DEMO_APPLICATION_INTERVIEWS: ApplicationInterview[] = [
+  {
+    id: "00000000-0000-4000-8000-005500000001",
+    applicationId: "app-005",
+    stage: "recruiter_screen",
+    occurredOn: "2026-11-04",
+    notes: "Fictional recruiter call (demo).",
+    createdAt: "2026-11-05T13:00:00Z",
+    isDemo: true,
+  },
 ];

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import {
+  Building,
   BriefcaseBusiness,
   FilePlus,
   FileText,
@@ -27,6 +28,7 @@ interface NavItem {
     | "/cover-letters"
     | "/projects"
     | "/profiles"
+    | "/boards"
     | "/settings";
   label: string;
   icon: LucideIcon;
@@ -54,6 +56,7 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Configure",
     items: [
       { href: "/profiles", label: "Search profiles", icon: ListFilter },
+      { href: "/boards", label: "Employer boards", icon: Building },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },

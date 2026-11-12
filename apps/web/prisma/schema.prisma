@@ -1,4 +1,4 @@
-// ProRez persistence model (Milestone 2A).
+// ProRez persistence model (Milestones 2A–2C).
 //
 // Design notes
 // - `job_postings` is the canonical, deduplicated job. Each place a job was seen
@@ -51,6 +51,7 @@ enum WorkArrangement {
 
 enum JobType {
   new_grad
+  junior
   internship
   co_op
 
@@ -72,15 +73,21 @@ enum Discipline {
   @@map("discipline")
 }
 
-/// Duration buckets for profile criteria. TS values "4" | "8" | "12_plus" | "unspecified"
-/// are not valid identifiers, so the repository maps them (lib/data/prisma-mappers.ts).
-enum DurationBucket {
-  months_4       @map("4")
-  months_8       @map("8")
-  months_12_plus @map("12_plus")
+/// Internship / co-op duration requirements for profiles and default settings
+/// (Milestone 2C; replaces the ambiguous 2A buckets). "4_to_8" is not a valid
+/// identifier, so the repository maps it (lib/repositories/prisma-mappers.ts).
+/// legacy_* values only exist on profiles migrated from the old buckets and
+/// keep their previous behaviour exactly; they cannot be newly selected.
+enum DurationRequirement {
+  exactly_4
+  up_to_4
+  months_4_to_8 @map("4_to_8")
+  any
   unspecified
+  legacy_5_to_8
+  legacy_over_8
 
-  @@map("duration_bucket")
+  @@map("duration_requirement")
 }
 
 enum ExperienceLevel {
@@ -122,14 +129,57 @@ enum SourceIntegrationStatus {
   @@map("source_integration_status")
 }
 
+/// Discovery lifecycle (independent of preparation and submission).
 enum DiscoveryStatus {
-  new
-  reviewed
-  shortlisted
+  discovered
+  saved
   dismissed
   expired
 
   @@map("discovery_status")
+}
+
+/// How a job entered ProRez.
+enum JobOrigin {
+  manual
+  automatic
+
+  @@map("job_origin")
+}
+
+enum SalaryCurrency {
+  CAD
+  USD
+
+  @@map("salary_currency")
+}
+
+enum SalaryPeriod {
+  hour
+  month
+  year
+
+  @@map("salary_period")
+}
+
+enum DescriptionSource {
+  manual_submission
+  manual_edit
+  source_import
+
+  @@map("description_source")
+}
+
+enum JobEventType {
+  created
+  sighting_added
+  discovery_status_changed
+  details_updated
+  notes_updated
+  description_added
+  evaluation_changed
+
+  @@map("job_event_type")
 }
 
 model JobSource {
@@ -144,6 +194,7 @@ model JobSource {
   updatedAt         DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   observations SourceObservation[]
+  boards       EmployerBoard[]
 
   @@map("job_sources")
 }
@@ -151,40 +202,56 @@ model JobSource {
 /// Canonical job record. One row per real-world posting regardless of how many
 /// sources reported it.
 model JobPosting {
-  id                String          @id
+  id                    String          @id
   /// Normalized identity (company|title|location) used to merge observations.
-  dedupeKey         String          @unique @map("dedupe_key")
-  company           String
-  title             String
-  jobType           JobType         @map("job_type")
-  durationMonths    Int?            @map("duration_months")
-  term              String?
-  disciplines       Discipline[]
-  summary           String          @default("")
-  responsibilities  String[]
-  qualifications    String[]
+  dedupeKey             String          @unique @map("dedupe_key")
+  company               String
+  title                 String
+  jobType               JobType         @map("job_type")
+  durationMonths        Int?            @map("duration_months")
+  term                  String?
+  disciplines           Discipline[]
+  summary               String          @default("")
+  responsibilities      String[]
+  qualifications        String[]
   /// Preferred link to the posting (usually from the primary observation).
-  postingUrl        String?         @map("posting_url")
-  postedAt          DateTime?       @map("posted_at") @db.Timestamptz(3)
-  firstDiscoveredAt DateTime        @map("first_discovered_at") @db.Timestamptz(3)
-  discoveryStatus   DiscoveryStatus @default(new) @map("discovery_status")
+  postingUrl            String?         @map("posting_url")
+  postedAt              DateTime?       @map("posted_at") @db.Timestamptz(3)
+  firstDiscoveredAt     DateTime        @map("first_discovered_at") @db.Timestamptz(3)
+  discoveryStatus       DiscoveryStatus @default(discovered) @map("discovery_status")
+  origin                JobOrigin       @default(automatic)
+  /// Bumped on every edit to job details (not on status changes); optimistic concurrency.
+  version               Int             @default(1)
+  /// Current full description text (untrusted; always rendered as plain text).
+  /// The original is preserved immutably in job_description_snapshots.
+  description           String?
+  experienceRequirement String?         @map("experience_requirement")
+  /// CHECK constraints keep salary fields consistent (see migration SQL).
+  salaryMin             Int?            @map("salary_min")
+  salaryMax             Int?            @map("salary_max")
+  salaryCurrency        SalaryCurrency? @map("salary_currency")
+  salaryPeriod          SalaryPeriod?   @map("salary_period")
+  notes                 String          @default("")
   /// Primary source for display; every sighting is in `observations`.
-  primarySourceId   String?         @map("primary_source_id")
-  isDemo            Boolean         @default(false) @map("is_demo")
-  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  primarySourceId       String?         @map("primary_source_id")
+  isDemo                Boolean         @default(false) @map("is_demo")
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  locations         JobLocation[]
-  observations      SourceObservation[]
-  match             JobMatch?
-  profileEvaluation JobProfileEvaluation?
-  application       Application?
-  approvals         ApprovalRequest[]
-  resumes           ResumeArtifact[]
-  coverLetters      CoverLetterArtifact[]
-  projectLinks      ProjectJob[]
+  locations            JobLocation[]
+  observations         SourceObservation[]
+  match                JobMatch?
+  profileEvaluation    JobProfileEvaluation?
+  application          Application?
+  approvals            ApprovalRequest[]
+  resumes              ResumeArtifact[]
+  coverLetters         CoverLetterArtifact[]
+  projectLinks         ProjectJob[]
+  descriptionSnapshots JobDescriptionSnapshot[]
+  events               JobEvent[]
 
   @@index([discoveryStatus])
+  @@index([origin])
   @@index([firstDiscoveredAt(sort: Desc)])
   @@index([jobType])
   @@map("job_postings")
@@ -208,25 +275,76 @@ model JobLocation {
 
 /// One sighting of a canonical job on one source.
 model SourceObservation {
-  id          String   @id @default(uuid()) @db.Uuid
-  jobId       String   @map("job_id")
-  sourceId    String   @map("source_id")
+  id            String          @id @default(uuid()) @db.Uuid
+  jobId         String          @map("job_id")
+  sourceId      String          @map("source_id")
+  /// Employer board the sighting came from (null for manual entries).
+  boardId       String?         @map("board_id") @db.Uuid
   /// The source's own identifier (null for manual entries).
-  externalId  String?  @map("external_id")
-  sourceUrl   String?  @map("source_url")
-  rawTitle    String?  @map("raw_title")
+  externalId    String?         @map("external_id")
+  /// URL exactly as submitted or reported (never fetched).
+  sourceUrl     String?         @map("source_url")
+  /// Normalized URL for duplicate detection (lib/jobs/url.ts). One job per URL.
+  canonicalUrl  String?         @unique @map("canonical_url")
+  /// ATS posting identity parsed from the URL, when recognisable. All three or none.
+  atsProvider   SourceProvider? @map("ats_provider")
+  atsBoardToken String?         @map("ats_board_token")
+  atsPostingId  String?         @map("ats_posting_id")
+  rawTitle      String?         @map("raw_title")
   /// Original payload for audit / re-parsing. Never rendered directly.
-  payload     Json?
-  firstSeenAt DateTime @map("first_seen_at") @db.Timestamptz(3)
-  lastSeenAt  DateTime @map("last_seen_at") @db.Timestamptz(3)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  payload       Json?
+  firstSeenAt   DateTime        @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt    DateTime        @map("last_seen_at") @db.Timestamptz(3)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  job    JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  source JobSource  @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  job    JobPosting     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  source JobSource      @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  board  EmployerBoard? @relation(fields: [boardId], references: [id], onDelete: SetNull)
 
   @@unique([sourceId, externalId])
+  @@unique([atsProvider, atsBoardToken, atsPostingId])
   @@index([jobId])
+  @@index([boardId])
   @@map("source_observations")
+}
+
+/// Immutable copy of a job description as it was captured. The first row per
+/// job is the original; edits append new rows. A trigger rejects UPDATEs.
+model JobDescriptionSnapshot {
+  id          String            @id @default(uuid()) @db.Uuid
+  jobId       String            @map("job_id")
+  content     String
+  /// SHA-256 (hex) of `content`.
+  contentHash String            @map("content_hash")
+  source      DescriptionSource
+  capturedAt  DateTime          @default(now()) @map("captured_at") @db.Timestamptz(3)
+  isDemo      Boolean           @default(false) @map("is_demo")
+
+  /// Restrict: a job with captured descriptions cannot be hard-deleted.
+  job JobPosting @relation(fields: [jobId], references: [id], onDelete: Restrict)
+
+  @@unique([jobId, contentHash])
+  @@index([jobId, capturedAt])
+  @@map("job_description_snapshots")
+}
+
+/// Append-only history for a job (status changes, edits, sightings, matching changes).
+model JobEvent {
+  id         String       @id @default(uuid()) @db.Uuid
+  jobId      String       @map("job_id")
+  type       JobEventType
+  fromValue  String?      @map("from_value")
+  toValue    String?      @map("to_value")
+  message    String?
+  /// Structured detail, e.g. the profile matches before/after an evaluation change.
+  data       Json?
+  occurredAt DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  isDemo     Boolean      @default(false) @map("is_demo")
+
+  job JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, occurredAt])
+  @@map("job_events")
 }
 
 /// Candidate-fit result for a job (one current score per job).
@@ -250,6 +368,13 @@ model JobMatch {
 // Search profiles
 // ---------------------------------------------------------------------------
 
+enum ProfileMatchStatus {
+  eligible
+  needs_review
+
+  @@map("profile_match_status")
+}
+
 enum AutomationMode {
   approval_required
   quick_generate
@@ -271,55 +396,85 @@ enum NotificationCadence {
   @@map("notification_cadence")
 }
 
+/// Name uniqueness is case-insensitive among NON-archived profiles: a partial
+/// unique index in the migration SQL (Prisma cannot express it).
 model SearchProfile {
-  id                   String              @id
-  name                 String              @unique
-  description          String              @default("")
-  enabled              Boolean             @default(true)
+  id                     String              @id
+  /// Current version; bumped on every saved change (optimistic concurrency).
+  version                Int                 @default(1)
+  /// Profiles with match history are archived instead of deleted.
+  archivedAt             DateTime?           @map("archived_at") @db.Timestamptz(3)
+  name                   String
+  description            String              @default("")
+  enabled                Boolean             @default(true)
   /// 0–100, enforced by CHECK constraint in the migration.
-  minFitScore          Int                 @default(70) @map("min_fit_score")
-  automationMode       AutomationMode      @default(approval_required) @map("automation_mode")
-  notificationsEnabled Boolean             @default(true) @map("notifications_enabled")
-  notificationChannel  NotificationChannel @default(telegram) @map("notification_channel")
-  notificationCadence  NotificationCadence @default(immediate) @map("notification_cadence")
-  isDemo               Boolean             @default(false) @map("is_demo")
-  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt            DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  minFitScore            Int                 @default(70) @map("min_fit_score")
+  automationMode         AutomationMode      @default(approval_required) @map("automation_mode")
+  notificationsEnabled   Boolean             @default(true) @map("notifications_enabled")
+  notificationChannel    NotificationChannel @default(telegram) @map("notification_channel")
+  notificationCadence    NotificationCadence @default(immediate) @map("notification_cadence")
+  /// Set by the 2C migration when old duration buckets were converted; cleared on the next save.
+  durationReviewRequired Boolean             @default(false) @map("duration_review_required")
+  isDemo                 Boolean             @default(false) @map("is_demo")
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   criteria ProfileCriteria?
+  versions SearchProfileVersion[]
   matches  JobProfileMatch[]
 
-  @@index([enabled])
+  @@index([enabled, archivedAt])
   @@map("search_profiles")
 }
 
 /// Matching criteria for a profile (1:1). Empty arrays mean "no constraint".
 model ProfileCriteria {
-  profileId               String            @id @map("profile_id")
-  titleKeywords           String[]          @map("title_keywords")
-  excludedTitleKeywords   String[]          @map("excluded_title_keywords")
+  profileId               String                @id @map("profile_id")
+  titleKeywords           String[]              @map("title_keywords")
+  excludedTitleKeywords   String[]              @map("excluded_title_keywords")
+  includeKeywords         String[]              @default([]) @map("include_keywords")
+  excludeKeywords         String[]              @default([]) @map("exclude_keywords")
   disciplines             Discipline[]
-  jobTypes                JobType[]         @map("job_types")
-  durations               DurationBucket[]
+  jobTypes                JobType[]             @map("job_types")
+  durations               DurationRequirement[]
   provinces               Province[]
   arrangements            WorkArrangement[]
-  includeRemoteCanadaWide Boolean           @default(true) @map("include_remote_canada_wide")
-  experienceLevels        ExperienceLevel[] @map("experience_levels")
-  maxYearsExperience      Int?              @map("max_years_experience")
+  includeRemoteCanadaWide Boolean               @default(true) @map("include_remote_canada_wide")
+  experienceLevels        ExperienceLevel[]     @map("experience_levels")
+  maxYearsExperience      Int?                  @map("max_years_experience")
 
   profile SearchProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@map("profile_criteria")
 }
 
+/// Immutable snapshot of a profile's settings at one version. Evaluations
+/// reference the version they used, so history stays explainable after edits.
+model SearchProfileVersion {
+  id        String   @id @default(uuid()) @db.Uuid
+  profileId String   @map("profile_id")
+  version   Int
+  /// The full SearchProfileDraft (lib/types.ts) as saved.
+  snapshot  Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  profile SearchProfile     @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  matches JobProfileMatch[]
+
+  @@unique([profileId, version])
+  @@map("search_profile_versions")
+}
+
 /// Result of evaluating one job against all enabled profiles — at most one per
 /// job, which is what makes notifications deduplicated.
 model JobProfileEvaluation {
-  jobId       String    @id @map("job_id")
-  evaluatedAt DateTime  @map("evaluated_at") @db.Timestamptz(3)
+  jobId         String    @id @map("job_id")
+  evaluatedAt   DateTime  @map("evaluated_at") @db.Timestamptz(3)
+  /// Matching-rules version (lib/matching/engine.ts MATCHING_ENGINE_VERSION).
+  engineVersion String    @map("engine_version")
   /// Set only once a notification has actually been sent.
-  notifiedAt  DateTime? @map("notified_at") @db.Timestamptz(3)
-  isDemo      Boolean   @default(false) @map("is_demo")
+  notifiedAt    DateTime? @map("notified_at") @db.Timestamptz(3)
+  isDemo        Boolean   @default(false) @map("is_demo")
 
   job     JobPosting        @relation(fields: [jobId], references: [id], onDelete: Cascade)
   matches JobProfileMatch[]
@@ -330,12 +485,20 @@ model JobProfileEvaluation {
 /// One profile that a job satisfied. `rank` 0 is the primary profile whose
 /// automation mode governs the job.
 model JobProfileMatch {
-  jobId     String @map("job_id")
-  profileId String @map("profile_id")
-  rank      Int
+  jobId          String             @map("job_id")
+  profileId      String             @map("profile_id")
+  /// The profile version (criteria snapshot) this result was computed against.
+  profileVersion Int                @map("profile_version")
+  rank           Int
+  status         ProfileMatchStatus
+  /// 0–100 soft relevance (not the candidate-fit score); null without soft signals.
+  relevance      Int?
+  reasons        String[]
 
   evaluation JobProfileEvaluation @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
-  profile    SearchProfile        @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  /// Restrict: a profile with match history cannot be hard-deleted (it is archived instead).
+  profile    SearchProfile        @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  version    SearchProfileVersion @relation(fields: [profileId, profileVersion], references: [profileId, version], onDelete: Restrict)
 
   @@id([jobId, profileId])
   @@unique([jobId, rank])
@@ -349,10 +512,10 @@ model JobProfileMatch {
 
 enum PreparationStatus {
   not_started
+  awaiting_approval
   queued
   generating
-  needs_review
-  prepared
+  ready_for_review
   failed
 
   @@map("preparation_status")
@@ -392,9 +555,10 @@ model Application {
   project     Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   events       ApplicationEvent[]
+  interviews   ApplicationInterview[]
   runs         WorkflowRun[]
-  resumes      ResumeArtifact[]      @relation("ApplicationResumes")
-  coverLetters CoverLetterArtifact[] @relation("ApplicationCoverLetters")
+  resumes      ResumeArtifact[]       @relation("ApplicationResumes")
+  coverLetters CoverLetterArtifact[]  @relation("ApplicationCoverLetters")
 
   @@index([preparationStatus])
   @@index([submissionStatus])
@@ -410,11 +574,41 @@ enum ApplicationEventType {
   submission_recorded
   artifact_linked
   note_updated
+  interview_recorded
+  submission_date_changed
 
   @@map("application_event_type")
 }
 
-/// Append-only history for an application.
+enum InterviewStage {
+  recruiter_screen
+  technical
+  take_home
+  onsite
+  final
+  other
+
+  @@map("interview_stage")
+}
+
+/// One interview stage the user recorded.
+model ApplicationInterview {
+  id            String         @id @default(uuid()) @db.Uuid
+  applicationId String         @map("application_id")
+  stage         InterviewStage
+  /// Calendar date (no time zone).
+  occurredOn    DateTime       @map("occurred_on") @db.Date
+  notes         String         @default("")
+  isDemo        Boolean        @default(false) @map("is_demo")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, occurredOn])
+  @@map("application_interviews")
+}
+
+/// Append-only history for an application (a trigger rejects UPDATEs).
 model ApplicationEvent {
   id            String               @id @default(uuid()) @db.Uuid
   applicationId String               @map("application_id")
@@ -641,4 +835,67 @@ model ApprovalRequest {
   @@index([jobId])
   @@index([decision, requestedAt(sort: Desc)])
   @@map("approval_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Employer boards (ATS registry). Polling is not implemented yet.
+// ---------------------------------------------------------------------------
+
+/// One public job board for one employer on one ATS provider.
+/// Duplicate registrations are prevented by unique (provider, board_token) and
+/// unique board_url; CHECK constraints in the migration keep tokens lowercase and
+/// restrict providers to ATS types.
+model EmployerBoard {
+  id                  String         @id @default(uuid()) @db.Uuid
+  provider            SourceProvider
+  employerName        String         @map("employer_name")
+  /// Provider-specific board identifier, stored lowercase.
+  boardToken          String         @map("board_token")
+  /// Canonical public URL derived from provider + token (lib/boards/board-url.ts).
+  boardUrl            String         @unique @map("board_url")
+  enabled             Boolean        @default(true)
+  pollIntervalMinutes Int            @default(360) @map("poll_interval_minutes")
+  lastCheckedAt       DateTime?      @map("last_checked_at") @db.Timestamptz(3)
+  lastSuccessAt       DateTime?      @map("last_success_at") @db.Timestamptz(3)
+  consecutiveFailures Int            @default(0) @map("consecutive_failures")
+  lastErrorAt         DateTime?      @map("last_error_at") @db.Timestamptz(3)
+  lastErrorMessage    String?        @map("last_error_message")
+  isDemo              Boolean        @default(false) @map("is_demo")
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  source       JobSource           @relation(fields: [provider], references: [provider], onDelete: Restrict)
+  observations SourceObservation[]
+
+  @@unique([provider, boardToken])
+  @@index([enabled, lastCheckedAt])
+  @@map("employer_boards")
+}
+
+// ---------------------------------------------------------------------------
+// Settings (single user; one row with id 'default', enforced by CHECK)
+// ---------------------------------------------------------------------------
+
+/// Defaults for new search profiles and applications, plus global switches.
+/// Search profiles remain the source of truth for matching; these values only
+/// pre-fill new profiles, so they never conflict with saved profiles.
+model UserSettings {
+  id                         String                @id @default("default")
+  /// Optimistic concurrency.
+  version                    Int                   @default(1)
+  provinces                  Province[]
+  arrangements               WorkArrangement[]
+  jobTypes                   JobType[]             @map("job_types")
+  durations                  DurationRequirement[]
+  disciplines                Discipline[]
+  includeRemoteCanadaWide    Boolean               @default(true) @map("include_remote_canada_wide")
+  /// Global pause: no notifications for any profile while true.
+  notificationsPaused        Boolean               @default(false) @map("notifications_paused")
+  defaultNotificationCadence NotificationCadence   @default(immediate) @map("default_notification_cadence")
+  defaultApplicationMode     ApplicationMode       @default(quick_apply) @map("default_application_mode")
+  defaultAutomationMode      AutomationMode        @default(approval_required) @map("default_automation_mode")
+  createdAt                  DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("user_settings")
 }

@@ -1,275 +1,60 @@
 "use client";
-
-import { useRef, useState, type FormEvent } from "react";
-import { Eye, Hammer, RotateCcw, Zap } from "lucide-react";
+import { useState, useTransition } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Save } from "lucide-react";
+import { createManualJobAction } from "@/app/jobs/actions";
 import { describedBy, Field } from "@/components/forms/field";
-import { PreviewNotice } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, NativeSelect, Textarea } from "@/components/ui/input";
-import {
-  DESCRIPTION_MAX_LENGTH,
-  EMPTY_MANUAL_SUBMISSION,
-  validateManualSubmission,
-  type ManualSubmission,
-  type ManualSubmissionErrors,
-  type ManualSubmissionInput,
-} from "@/lib/jobs/manual-submission";
-import { formatDuration } from "@/lib/format";
-import { JOB_TYPE_LABELS, MODE_LABELS } from "@/lib/labels";
-import { JOB_TYPES, type ApplicationMode } from "@/lib/types";
-import { cn } from "@/lib/utils";
-
-const MODE_OPTIONS: { value: ApplicationMode; icon: typeof Zap; description: string }[] = [
-  { value: "quick_apply", icon: Zap, description: "Tailored resume and cover letter." },
-  { value: "full_build", icon: Hammer, description: "Resume, cover letter, and a relevant project." },
-];
+import { EMPTY_MANUAL_JOB_INPUT, MANUAL_JOB_LIMITS, validateManualJob, type ManualJobErrors, type ManualJobInput } from "@/lib/jobs/manual-submission";
+import { ARRANGEMENT_LABELS, JOB_TYPE_LABELS, PROVINCE_LABELS } from "@/lib/labels";
+import { JOB_TYPES, PROVINCES, WORK_ARRANGEMENTS } from "@/lib/types";
 
 export function ManualJobForm() {
-  const [input, setInput] = useState<ManualSubmissionInput>(EMPTY_MANUAL_SUBMISSION);
-  const [errors, setErrors] = useState<ManualSubmissionErrors>({});
-  const [preview, setPreview] = useState<ManualSubmission | null>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-
-  function set<K extends keyof ManualSubmissionInput>(key: K, value: ManualSubmissionInput[K]) {
-    setInput((prev) => ({ ...prev, [key]: value }));
-    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: undefined }));
+  const router = useRouter();
+  const [input, setInput] = useState<ManualJobInput>(EMPTY_MANUAL_JOB_INPUT);
+  const [errors, setErrors] = useState<ManualJobErrors>({});
+  const [message, setMessage] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState<{ jobId: string; reason: string }[]>([]);
+  const [pending, startTransition] = useTransition();
+  function set<K extends keyof ManualJobInput>(key: K, value: ManualJobInput[K]) {
+    setInput((old) => ({ ...old, [key]: value })); setErrors((old) => ({ ...old, [key]: undefined }));
   }
-
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const result = validateManualSubmission(input);
-    if (!result.ok) {
-      setErrors(result.errors);
-      setPreview(null);
-      // Move focus to the first invalid control.
-      requestAnimationFrame(() => {
-        formRef.current?.querySelector<HTMLElement>("[aria-invalid='true']")?.focus();
-      });
-      return;
-    }
-    setErrors({});
-    setPreview(result.value);
-    requestAnimationFrame(() => previewRef.current?.focus());
+  function submit() {
+    const checked = validateManualJob(input);
+    if (!checked.ok) { setErrors(checked.errors); setMessage("Please fix the highlighted fields."); return; }
+    setMessage(null);
+    startTransition(async () => {
+      const result = await createManualJobAction(input);
+      if (result.ok) { router.push(`/jobs/${result.value.job.id}?created=1`); return; }
+      setErrors((result.fieldErrors ?? {}) as ManualJobErrors); setMessage(result.message);
+      setDuplicates((result.duplicates ?? []).map((d) => ({ jobId: d.jobId, reason: d.reasons.join(" ") })));
+    });
   }
-
-  function reset() {
-    setInput(EMPTY_MANUAL_SUBMISSION);
-    setErrors({});
-    setPreview(null);
-  }
-
-  const durationRelevant = input.jobType !== "new_grad";
-
-  return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
-      <form ref={formRef} onSubmit={onSubmit} noValidate className="space-y-6 xl:col-span-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Job source</CardTitle>
-            <CardDescription>Provide a link to the posting, paste its description, or both.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Field id="jobUrl" label="Job URL" required hint="Full address starting with https://" error={errors.jobUrl}>
-              <Input
-                {...describedBy("jobUrl", errors.jobUrl, true)}
-                type="url"
-                inputMode="url"
-                autoComplete="off"
-                placeholder="https://careers.example.com/jobs/12345"
-                value={input.jobUrl}
-                onChange={(e) => set("jobUrl", e.target.value)}
-              />
-            </Field>
-            <Field
-              id="description"
-              label="Job description"
-              hint={`${input.description.length.toLocaleString("en-CA")} / ${DESCRIPTION_MAX_LENGTH.toLocaleString("en-CA")} characters`}
-              error={errors.description}
-            >
-              <Textarea
-                {...describedBy("description", errors.description, true)}
-                rows={8}
-                placeholder="Paste the full job description here…"
-                value={input.description}
-                onChange={(e) => set("description", e.target.value)}
-              />
-            </Field>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Position details</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field id="company" label="Company name" required error={errors.company}>
-              <Input
-                {...describedBy("company", errors.company)}
-                autoComplete="organization"
-                value={input.company}
-                onChange={(e) => set("company", e.target.value)}
-              />
-            </Field>
-            <Field id="title" label="Position title" required error={errors.title}>
-              <Input
-                {...describedBy("title", errors.title)}
-                value={input.title}
-                onChange={(e) => set("title", e.target.value)}
-              />
-            </Field>
-            <Field id="location" label="Location" hint="e.g. Toronto, ON · Hybrid" error={errors.location}>
-              <Input
-                {...describedBy("location", errors.location, true)}
-                value={input.location}
-                onChange={(e) => set("location", e.target.value)}
-              />
-            </Field>
-            <Field id="jobType" label="Employment type" required error={errors.jobType}>
-              <NativeSelect
-                {...describedBy("jobType", errors.jobType)}
-                value={input.jobType}
-                onChange={(e) => set("jobType", e.target.value)}
-              >
-                <option value="">Select a type…</option>
-                {JOB_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {JOB_TYPE_LABELS[t]}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field
-              id="durationMonths"
-              label="Duration (months)"
-              hint={durationRelevant ? "Leave blank if not stated." : "Usually not applicable to new grad roles."}
-              error={errors.durationMonths}
-            >
-              <Input
-                {...describedBy("durationMonths", errors.durationMonths, true)}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={24}
-                step={1}
-                placeholder="4"
-                value={input.durationMonths}
-                onChange={(e) => set("durationMonths", e.target.value)}
-              />
-            </Field>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Application mode</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <fieldset aria-describedby={errors.mode ? "mode-error" : undefined}>
-              <legend className="sr-only">Application mode (required)</legend>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {MODE_OPTIONS.map(({ value, icon: Icon, description }) => (
-                  <label
-                    key={value}
-                    className={cn(
-                      "flex cursor-pointer gap-3 rounded-lg border p-4 transition-colors has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/50",
-                      input.mode === value ? "border-primary bg-primary/5" : "hover:bg-muted/50",
-                      errors.mode && "border-destructive",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="mode"
-                      value={value}
-                      checked={input.mode === value}
-                      onChange={() => set("mode", value)}
-                      className="mt-1 size-4 shrink-0 self-start accent-[var(--primary)]"
-                    />
-                    <span>
-                      <span className="flex items-center gap-1.5 font-medium">
-                        <Icon className="size-4 text-primary" aria-hidden="true" />
-                        {MODE_LABELS[value]}
-                      </span>
-                      <span className="text-sm text-muted-foreground">{description}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              {errors.mode ? (
-                <p id="mode-error" className="mt-2 text-xs text-destructive">
-                  {errors.mode}
-                </p>
-              ) : null}
-            </fieldset>
-          </CardContent>
-        </Card>
-
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="ghost" onClick={reset}>
-            <RotateCcw /> Clear form
-          </Button>
-          <Button type="submit">
-            <Eye /> Validate &amp; preview
-          </Button>
-        </div>
-      </form>
-
-      <aside className="space-y-4 xl:col-span-2">
-        <PreviewNotice title="Preview only — nothing is saved">
-          Submitting validates the form and shows a local preview below. The job is not stored, no workflow is started,
-          and nothing is sent anywhere. Saving arrives in a later milestone.
-        </PreviewNotice>
-
-        <div ref={previewRef} tabIndex={-1} className="rounded-xl outline-none" aria-live="polite">
-          {preview ? (
-            <Card className="border-dashed">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <CardTitle>Local preview</CardTitle>
-                  <Badge variant="warning">Not saved</Badge>
-                </div>
-                <CardDescription>This is how the job would be recorded. Refreshing the page discards it.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-1 gap-3 text-sm">
-                  <PreviewRow label="Company">{preview.company}</PreviewRow>
-                  <PreviewRow label="Position">{preview.title}</PreviewRow>
-                  <PreviewRow label="Location">{preview.location ?? "Not specified"}</PreviewRow>
-                  <PreviewRow label="Employment type">{JOB_TYPE_LABELS[preview.jobType]}</PreviewRow>
-                  <PreviewRow label="Duration">{formatDuration(preview.durationMonths)}</PreviewRow>
-                  <PreviewRow label="Mode">{MODE_LABELS[preview.mode]}</PreviewRow>
-                  <PreviewRow label="Job URL">
-                    <span className="break-all font-mono text-xs">{preview.jobUrl ?? "Not provided"}</span>
-                  </PreviewRow>
-                  <PreviewRow label="Description">
-                    {preview.description ? (
-                      <span className="line-clamp-4 whitespace-pre-line text-muted-foreground">{preview.description}</span>
-                    ) : (
-                      "Not provided"
-                    )}
-                  </PreviewRow>
-                </dl>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-              Fill in the form and choose <span className="font-medium">Validate &amp; preview</span> to see the result
-              here.
-            </div>
-          )}
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function PreviewRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-[7.5rem_1fr] gap-2">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
-  );
+  return <form onSubmit={(e) => { e.preventDefault(); submit(); }} className="space-y-6" noValidate>
+    {message ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">{message}</div> : null}
+    {duplicates.length ? <Card><CardHeader><CardTitle>Existing job found</CardTitle></CardHeader><CardContent>{duplicates.map((d) => <p key={d.jobId} className="text-sm"><Link className="font-medium text-primary hover:underline" href={`/jobs/${d.jobId}`}>Open existing job</Link>{d.reason ? ` — ${d.reason}` : ""}</p>)}</CardContent></Card> : null}
+    <Card><CardHeader><CardTitle>Job source</CardTitle></CardHeader><CardContent className="space-y-4">
+      <Field id="jobUrl" label="Job URL" hint="Optional when a description is provided" error={errors.jobUrl}><Input {...describedBy("jobUrl", errors.jobUrl, true)} type="url" value={input.jobUrl} onChange={(e) => set("jobUrl", e.target.value)} /></Field>
+      <Field id="description" label="Full job description" hint={`${input.description.length.toLocaleString()} / ${MANUAL_JOB_LIMITS.descriptionMax.toLocaleString()} characters`} error={errors.description}><Textarea {...describedBy("description", errors.description, true)} rows={12} value={input.description} onChange={(e) => set("description", e.target.value)} /></Field>
+    </CardContent></Card>
+    <Card><CardHeader><CardTitle>Position details</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2">
+      <Field id="company" label="Company" required error={errors.company}><Input {...describedBy("company", errors.company)} value={input.company} onChange={(e) => set("company", e.target.value)} /></Field>
+      <Field id="title" label="Position title" required error={errors.title}><Input {...describedBy("title", errors.title)} value={input.title} onChange={(e) => set("title", e.target.value)} /></Field>
+      <Field id="city" label="City" error={errors.city}><Input {...describedBy("city", errors.city, true)} value={input.city} onChange={(e) => set("city", e.target.value)} /></Field>
+      <Field id="province" label="Province / territory" error={errors.province}><NativeSelect {...describedBy("province", errors.province, true)} value={input.province} onChange={(e) => set("province", e.target.value)}><option value="">Not specified</option>{PROVINCES.map((v) => <option key={v} value={v}>{PROVINCE_LABELS[v]}</option>)}</NativeSelect></Field>
+      <Field id="arrangement" label="Work arrangement" error={errors.arrangement}><NativeSelect {...describedBy("arrangement", errors.arrangement, true)} value={input.arrangement} onChange={(e) => set("arrangement", e.target.value)}><option value="">Not specified</option>{WORK_ARRANGEMENTS.map((v) => <option key={v} value={v}>{ARRANGEMENT_LABELS[v]}</option>)}</NativeSelect></Field>
+      <Field id="jobType" label="Employment type" required error={errors.jobType}><NativeSelect {...describedBy("jobType", errors.jobType)} value={input.jobType} onChange={(e) => set("jobType", e.target.value)}><option value="">Select…</option>{JOB_TYPES.map((v) => <option key={v} value={v}>{JOB_TYPE_LABELS[v]}</option>)}</NativeSelect></Field>
+      <Field id="durationMonths" label="Duration (months)" error={errors.durationMonths}><Input {...describedBy("durationMonths", errors.durationMonths, true)} type="number" min={1} max={24} value={input.durationMonths} onChange={(e) => set("durationMonths", e.target.value)} /></Field>
+      <Field id="term" label="Term" hint="For example, Summer 2027" error={errors.term}><Input {...describedBy("term", errors.term, true)} value={input.term} onChange={(e) => set("term", e.target.value)} /></Field>
+      <Field id="experienceRequirement" label="Experience requirement" error={errors.experienceRequirement}><Input {...describedBy("experienceRequirement", errors.experienceRequirement, true)} value={input.experienceRequirement} onChange={(e) => set("experienceRequirement", e.target.value)} /></Field>
+      <Field id="salaryMin" label="Minimum salary" error={errors.salaryMin}><Input {...describedBy("salaryMin", errors.salaryMin, true)} inputMode="numeric" value={input.salaryMin} onChange={(e) => set("salaryMin", e.target.value)} /></Field>
+      <Field id="salaryMax" label="Maximum salary" error={errors.salaryMax}><Input {...describedBy("salaryMax", errors.salaryMax, true)} inputMode="numeric" value={input.salaryMax} onChange={(e) => set("salaryMax", e.target.value)} /></Field>
+      <Field id="salaryPeriod" label="Salary period" error={errors.salaryPeriod}><NativeSelect {...describedBy("salaryPeriod", errors.salaryPeriod, true)} value={input.salaryPeriod} onChange={(e) => set("salaryPeriod", e.target.value)}><option value="">Not specified</option><option value="hour">Per hour</option><option value="month">Per month</option><option value="year">Per year</option></NativeSelect></Field>
+      <Field id="notes" label="Notes" error={errors.notes}><Textarea {...describedBy("notes", errors.notes, true)} rows={4} value={input.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+    </CardContent></Card>
+    <div className="flex justify-end"><Button type="submit" disabled={pending}><Save />{pending ? "Saving…" : "Save job"}</Button></div>
+  </form>;
 }

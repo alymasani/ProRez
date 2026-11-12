@@ -1,36 +1,43 @@
 import type { Metadata } from "next";
 import { ApplicationsView } from "@/components/applications/applications-view";
 import { PageHeader } from "@/components/page-header";
-import { buildApplicationRows } from "@/lib/applications";
+import { buildApplicationRows } from "@/lib/applications/rows";
 import {
   getApplicationRuns,
+  getApplicationEvents,
+  getApplicationInterviews,
   getApplications,
   getCoverLetters,
   getJobs,
   getProjects,
   getResumes,
 } from "@/lib/data";
+import { mutationsConfigured } from "@/lib/auth/mutation-guard";
+import { resolveDataSource } from "@/lib/repositories/source";
 
 export const metadata: Metadata = { title: "Applications" };
 
 export default async function ApplicationsPage() {
-  const [applications, jobs, resumes, coverLetters, projects, runs] = await Promise.all([
+  const [applications, jobs, resumes, coverLetters, projects, runs, events, interviews] = await Promise.all([
     getApplications(),
     getJobs(),
     getResumes(),
     getCoverLetters(),
     getProjects(),
     getApplicationRuns(),
+    getApplicationEvents(),
+    getApplicationInterviews(),
   ]);
-  const rows = buildApplicationRows({ applications, jobs, resumes, coverLetters, projects, runs });
+  const rows = buildApplicationRows({ applications, jobs, resumes, coverLetters, projects, runs, events, interviews });
+  const mutation = mutationsConfigured({ dataSource: resolveDataSource(process.env), localMutations: process.env.PROREZ_LOCAL_MUTATIONS });
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Applications"
-        description="Preparation status tracks generated materials; submission status records what you've done with the employer. ProRez never submits applications on your behalf. All rows are demo data."
+        description="Preparation status tracks generated materials; application status records what you've done with the employer. ProRez never submits applications on your behalf."
       />
-      <ApplicationsView rows={rows} />
+      <ApplicationsView rows={rows} writable={mutation.enabled} />
     </div>
   );
 }

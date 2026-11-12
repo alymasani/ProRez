@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Bot, MessageCircle, RotateCcw, Save } from "lucide-react";
 import { CheckboxGroup, optionsFrom } from "@/components/forms/checkbox-group";
+import { saveSettingsAction } from "@/app/settings/actions";
 import { FutureAction } from "@/components/future-action";
 import { PreviewNotice } from "@/components/states";
 import { StatusBadge } from "@/components/status-badge";
@@ -11,10 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { NativeSelect } from "@/components/ui/input";
 import {
   ARRANGEMENT_LABELS,
   DISCIPLINE_LABELS,
-  DURATION_LABELS,
+  DURATION_REQUIREMENT_LABELS,
   INTEGRATION_STATUS,
   JOB_TYPE_LABELS,
   PROVINCE_LABELS,
@@ -22,54 +24,69 @@ import {
 } from "@/lib/labels";
 import {
   DISCIPLINES,
-  DURATION_BUCKETS,
+  SELECTABLE_DURATION_REQUIREMENTS,
   JOB_TYPES,
   PROVINCES,
   WORK_ARRANGEMENTS,
   type JobSource,
+  type AppSettings,
   type SearchPreferences,
 } from "@/lib/types";
 
 const PROVINCE_OPTIONS = PROVINCES.map((p) => ({ value: p, label: PROVINCE_LABELS[p] }));
 
-function sameSet<T>(a: readonly T[], b: readonly T[]) {
-  return a.length === b.length && a.every((v) => b.includes(v));
-}
-
 export function SettingsForm({
-  initialPreferences,
+  initialSettings,
   initialSources,
 }: {
-  initialPreferences: SearchPreferences;
+  initialSettings: AppSettings;
   initialSources: JobSource[];
 }) {
-  const [prefs, setPrefs] = useState(initialPreferences);
+  const [settings, setSettings] = useState(initialSettings);
+  const [baseline, setBaseline] = useState(initialSettings);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const prefs = settings.search;
   const [sourceEnabled, setSourceEnabled] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(initialSources.map((s) => [s.id, s.enabled])),
   );
+  const [sourceBaseline, setSourceBaseline] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(initialSources.map((s) => [s.id, s.enabled])),
+  );
 
-  const dirty =
-    (Object.keys(prefs) as (keyof SearchPreferences)[]).some(
-      (k) => !sameSet<string>(prefs[k], initialPreferences[k]),
-    ) || initialSources.some((s) => sourceEnabled[s.id] !== s.enabled);
+  const dirty = JSON.stringify(settings) !== JSON.stringify(baseline) ||
+    Object.keys(sourceEnabled).some((id) => sourceEnabled[id] !== sourceBaseline[id]);
 
   function patch(next: Partial<SearchPreferences>) {
-    setPrefs((p) => ({ ...p, ...next }));
+    setSettings((s) => ({ ...s, search: { ...s.search, ...next } }));
   }
 
   function reset() {
-    setPrefs(initialPreferences);
-    setSourceEnabled(Object.fromEntries(initialSources.map((s) => [s.id, s.enabled])));
+    setSettings(initialSettings);
+    setSourceEnabled(sourceBaseline);
+  }
+
+  function save() {
+    startTransition(async () => {
+      const result = await saveSettingsAction(settings.version, {
+        search: settings.search,
+        notifications: settings.notifications,
+        workflow: settings.workflow,
+        sources: sourceEnabled,
+      });
+      if (result.ok) { setSettings(result.value); setBaseline(result.value); setSourceBaseline({ ...sourceEnabled }); setMessage("Settings saved."); }
+      else setMessage(result.message);
+    });
   }
 
   return (
     <div className="space-y-6">
       <div className="sticky top-14 z-20 -mx-4 flex flex-col gap-3 border-b bg-background/90 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between lg:top-0 lg:mx-0 lg:rounded-xl lg:border lg:px-4">
         <p className="text-sm" aria-live="polite">
-          {dirty ? (
+          {message ? <span>{message}</span> : dirty ? (
             <span className="flex items-center gap-2">
               <Badge variant="warning">Unsaved</Badge>
-              Local changes only — they reset when you leave or refresh.
+              Changes have not been saved.
             </span>
           ) : (
             <span className="text-muted-foreground">Showing demo defaults.</span>
@@ -79,9 +96,7 @@ export function SettingsForm({
           <Button variant="ghost" size="sm" onClick={reset} disabled={!dirty}>
             <RotateCcw /> Reset
           </Button>
-          <FutureAction variant="default" reason="Saving settings requires persistence, planned for a later milestone">
-            <Save /> Save
-          </FutureAction>
+          <Button size="sm" onClick={save} disabled={!dirty || pending}><Save />{pending ? "Saving…" : "Save"}</Button>
         </div>
       </div>
 
@@ -120,7 +135,7 @@ export function SettingsForm({
             />
             <CheckboxGroup
               legend="Internship durations"
-              options={optionsFrom(DURATION_BUCKETS, DURATION_LABELS)}
+              options={SELECTABLE_DURATION_REQUIREMENTS.map((value) => ({ value, label: DURATION_REQUIREMENT_LABELS[value].label }))}
               value={prefs.durations}
               onChange={(durations) => patch({ durations })}
             />
@@ -132,6 +147,19 @@ export function SettingsForm({
             onChange={(disciplines) => patch({ disciplines })}
             columns={3}
           />
+          <label className="flex max-w-lg items-center justify-between gap-4 rounded-lg border p-3 text-sm">
+            Include remote roles anywhere in Canada
+            <Switch checked={prefs.includeRemoteCanadaWide} onCheckedChange={(includeRemoteCanadaWide) => patch({ includeRemoteCanadaWide })} />
+          </label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Notifications and workflow</CardTitle><CardDescription>Defaults for new profiles and applications.</CardDescription></CardHeader>
+        <CardContent className="grid gap-5 sm:grid-cols-3">
+          <label className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">Pause notifications<Switch checked={settings.notifications.paused} onCheckedChange={(paused) => setSettings((s) => ({ ...s, notifications: { ...s.notifications, paused } }))} /></label>
+          <label className="space-y-1 text-sm"><span className="font-medium">Notification cadence</span><NativeSelect value={settings.notifications.defaultCadence} onChange={(e) => setSettings((s) => ({ ...s, notifications: { ...s.notifications, defaultCadence: e.target.value as AppSettings["notifications"]["defaultCadence"] } }))}><option value="immediate">Immediate</option><option value="daily_digest">Daily digest</option></NativeSelect></label>
+          <label className="space-y-1 text-sm"><span className="font-medium">Application mode</span><NativeSelect value={settings.workflow.defaultApplicationMode} onChange={(e) => setSettings((s) => ({ ...s, workflow: { ...s.workflow, defaultApplicationMode: e.target.value as AppSettings["workflow"]["defaultApplicationMode"] } }))}><option value="quick_apply">Quick Apply</option><option value="full_build">Full Build</option></NativeSelect></label>
         </CardContent>
       </Card>
 
@@ -139,7 +167,12 @@ export function SettingsForm({
         <CardHeader>
           <CardTitle>Job sources</CardTitle>
           <CardDescription>
-            Choose which sources to monitor once connectors exist. No source is connected or polled yet.
+            Choose which sources to monitor once connectors exist. No source is connected or polled yet. Individual
+            employer boards are managed in the{" "}
+            <Link href="/boards" className="text-primary hover:underline">
+              employer board registry
+            </Link>
+            .
           </CardDescription>
         </CardHeader>
         <CardContent>

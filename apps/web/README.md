@@ -3,13 +3,14 @@
 Next.js (App Router, Cache Components) dashboard for discovering Canadian software engineering
 internships, co-ops, and new grad roles, and managing applications.
 
-> **Status (Milestone 2A):** PostgreSQL persistence layer in place (read-only from the UI). All data
-> shown is fictional demo data. Nothing is sent, generated, or submitted.
+> **Status (Milestone 2B):** persistent search profiles, a deterministic matching engine, and an
+> employer-board registry (database mode, local-only saving). All demo data is fictional. Nothing is
+> scraped, sent, generated, or submitted.
 
 ## Scripts
 
 ```bash
-npm run dev     # development server on http://localhost:3000
+npm run dev     # development server on http://127.0.0.1:3000 (loopback only)
 npm run build   # production build
 npm run lint    # ESLint
 npm test        # Vitest unit tests for pure logic in lib/
@@ -46,7 +47,10 @@ Full guide, including migrations, seeding rules, reset procedures, and the schem
 | `tests/db/` | Database integration tests (`npm run test:db`) |
 | `lib/jobs/filters.ts` | Pure search/filter/sort logic with URL (de)serialization |
 | `lib/jobs/manual-submission.ts` | Manual job form validation |
-| `lib/profiles/draft.ts` | Search profile form helpers and validation |
+| `lib/profiles/` | Profile form rules (`draft.ts`), strict server parsing (`schema.ts`), persistence (`service.ts`) |
+| `lib/matching/` | Deterministic eligibility engine, evaluation persistence, notification planning — see [docs/matching.md](docs/matching.md) |
+| `lib/boards/` | Employer board URLs, validation, health, persistence |
+| `lib/auth/mutation-guard.ts` | The single access check every write passes through |
 
 ## Conventions
 

@@ -23,7 +23,7 @@ test.describe("every route", () => {
 
   test("every page carries a visible demo-data notice", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/All data is fictional|Demo data only/).filter({ visible: true })).toBeVisible();
+    await expect(page.getByText(/All data is fictional|Demo data only|Demo records are fictional|Demo data · edits save locally/).filter({ visible: true })).toBeVisible();
   });
 });
 
@@ -41,6 +41,7 @@ test.describe("sidebar navigation (desktop)", () => {
       ["Cover letters", "Cover letter library"],
       ["Projects", "Projects"],
       ["Search profiles", "Search profiles"],
+      ["Employer boards", "Employer boards"],
       ["Settings", "Settings"],
       ["Overview", "Overview"],
     ] as const;

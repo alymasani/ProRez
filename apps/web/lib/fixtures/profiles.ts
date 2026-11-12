@@ -1,24 +1,31 @@
 /**
- * DEMO FIXTURES — example search profiles and illustrative match records.
- * The match records are hand-written to show the deduplication model; no
- * profile evaluation exists in Milestone 1.
+ * DEMO FIXTURES — example search profiles. Job ↔ profile matches are no
+ * longer hand-written: they are computed by the matching engine
+ * (lib/matching/engine.ts) from these profiles and the demo jobs.
  */
-import type { JobProfileMatch, SearchProfile } from "@/lib/types";
+import type { SearchProfile } from "@/lib/types";
 
 const CREATED = "2026-10-01T12:00:00Z";
+
+/** Fixed timestamp for demo evaluations so fixture output is deterministic. */
+export const DEMO_EVALUATED_AT = "2026-11-11T09:00:00Z";
 
 export const DEMO_SEARCH_PROFILES: SearchProfile[] = [
   {
     id: "profile-coop-4mo",
+    version: 1,
+    archivedAt: null,
     name: "Four-month SWE co-ops",
     description: "Four-month Canadian software engineering co-ops and internships for Summer 2027.",
     enabled: true,
     criteria: {
-      titleKeywords: ["software", "developer", "engineer"],
+      titleKeywords: ["software", "developer", "engineer", "engineering"],
       excludedTitleKeywords: ["senior", "staff", "manager"],
-      disciplines: ["backend", "full_stack", "infrastructure", "mobile"],
+      includeKeywords: ["automated tests", "pipelines", "api"],
+      excludeKeywords: ["security clearance"],
+      disciplines: ["backend", "full_stack", "infrastructure", "mobile", "data"],
       jobTypes: ["co_op", "internship"],
-      durations: ["4"],
+      durations: ["exactly_4"],
       provinces: ["ON", "QC", "BC", "NS"],
       arrangements: ["onsite", "hybrid", "remote"],
       includeRemoteCanadaWide: true,
@@ -28,20 +35,25 @@ export const DEMO_SEARCH_PROFILES: SearchProfile[] = [
     minFitScore: 70,
     notifications: { enabled: true, channel: "telegram", cadence: "immediate" },
     automationMode: "approval_required",
+    durationReviewRequired: false,
     createdAt: CREATED,
     updatedAt: "2026-11-02T12:00:00Z",
     isDemo: true,
   },
   {
     id: "profile-junior",
+    version: 1,
+    archivedAt: null,
     name: "Junior developer roles",
     description: "Junior software developer roles with up to two years of experience required.",
     enabled: true,
     criteria: {
       titleKeywords: ["junior", "software developer", "software engineer i"],
       excludedTitleKeywords: ["senior", "lead"],
-      disciplines: ["backend", "full_stack", "frontend"],
-      jobTypes: ["new_grad"],
+      includeKeywords: ["typescript", "platform"],
+      excludeKeywords: [],
+      disciplines: ["backend", "full_stack", "frontend", "infrastructure"],
+      jobTypes: ["junior", "new_grad"],
       durations: [],
       provinces: ["ON"],
       arrangements: ["hybrid", "remote"],
@@ -52,18 +64,23 @@ export const DEMO_SEARCH_PROFILES: SearchProfile[] = [
     minFitScore: 65,
     notifications: { enabled: true, channel: "telegram", cadence: "daily_digest" },
     automationMode: "notify_only",
+    durationReviewRequired: false,
     createdAt: CREATED,
     updatedAt: CREATED,
     isDemo: true,
   },
   {
     id: "profile-new-grad",
+    version: 1,
+    archivedAt: null,
     name: "New grad SWE",
     description: "New graduate software engineering roles across Canada starting in 2027.",
     enabled: true,
     criteria: {
-      titleKeywords: ["new grad", "new graduate", "software engineer"],
+      titleKeywords: ["new grad", "new graduate", "software engineer", "software developer"],
       excludedTitleKeywords: ["senior", "intern"],
+      includeKeywords: ["payment", "scheduling"],
+      excludeKeywords: [],
       disciplines: ["backend", "full_stack", "infrastructure"],
       jobTypes: ["new_grad"],
       durations: [],
@@ -76,21 +93,26 @@ export const DEMO_SEARCH_PROFILES: SearchProfile[] = [
     minFitScore: 75,
     notifications: { enabled: true, channel: "telegram", cadence: "immediate" },
     automationMode: "quick_generate",
+    durationReviewRequired: false,
     createdAt: CREATED,
     updatedAt: "2026-10-20T12:00:00Z",
     isDemo: true,
   },
   {
     id: "profile-embedded",
+    version: 1,
+    archivedAt: null,
     name: "Embedded & firmware (custom)",
     description: "A custom technical profile for embedded and firmware placements of any length.",
     enabled: false,
     criteria: {
       titleKeywords: ["embedded", "firmware"],
       excludedTitleKeywords: [],
+      includeKeywords: ["firmware", "microcontroller"],
+      excludeKeywords: [],
       disciplines: ["embedded"],
       jobTypes: ["internship", "co_op"],
-      durations: ["4", "8", "12_plus"],
+      durations: ["any"],
       provinces: ["ON", "QC"],
       arrangements: ["onsite", "hybrid"],
       includeRemoteCanadaWide: false,
@@ -100,48 +122,9 @@ export const DEMO_SEARCH_PROFILES: SearchProfile[] = [
     minFitScore: 60,
     notifications: { enabled: false, channel: "telegram", cadence: "daily_digest" },
     automationMode: "notify_only",
+    durationReviewRequired: false,
     createdAt: "2026-10-15T12:00:00Z",
     updatedAt: "2026-10-15T12:00:00Z",
-    isDemo: true,
-  },
-];
-
-/** Illustrative: one record per job even when several profiles match. */
-export const DEMO_JOB_PROFILE_MATCHES: JobProfileMatch[] = [
-  {
-    jobId: "job-001",
-    dedupeKey: "northlight-robotics|software-engineering-intern-embedded-systems|waterloo-on",
-    matchedProfileIds: ["profile-coop-4mo", "profile-embedded"],
-    primaryProfileId: "profile-coop-4mo",
-    evaluatedAt: "2026-11-10T14:15:00Z",
-    notifiedAt: null,
-    isDemo: true,
-  },
-  {
-    jobId: "job-010",
-    dedupeKey: "quillstone-software|junior-software-engineer-new-grad|toronto-on",
-    matchedProfileIds: ["profile-new-grad", "profile-junior"],
-    primaryProfileId: "profile-new-grad",
-    evaluatedAt: "2026-11-10T16:52:00Z",
-    notifiedAt: null,
-    isDemo: true,
-  },
-  {
-    jobId: "job-015",
-    dedupeKey: "driftwood-payments|new-grad-software-engineer|toronto-on",
-    matchedProfileIds: ["profile-new-grad", "profile-junior"],
-    primaryProfileId: "profile-new-grad",
-    evaluatedAt: "2026-10-27T14:02:00Z",
-    notifiedAt: null,
-    isDemo: true,
-  },
-  {
-    jobId: "job-002",
-    dedupeKey: "maplewave-analytics|data-engineering-co-op|toronto-on",
-    matchedProfileIds: ["profile-coop-4mo"],
-    primaryProfileId: "profile-coop-4mo",
-    evaluatedAt: "2026-11-10T09:47:00Z",
-    notifiedAt: null,
     isDemo: true,
   },
 ];

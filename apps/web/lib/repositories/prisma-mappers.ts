@@ -3,13 +3,20 @@
  * Kept separate from queries so the shapes are easy to review and test.
  */
 import type { Prisma } from "../generated/prisma/client";
-import type { DurationBucket as DbDurationBucket } from "../generated/prisma/enums";
+import type { DurationRequirement as DbDurationRequirement } from "../generated/prisma/enums";
 import type {
+  AtsProvider,
+  EmployerBoard,
   Application,
   ApplicationRun,
+  ApplicationEvent,
+  ApplicationInterview,
   ApprovalRequest,
   CoverLetterArtifact,
-  DurationBucket,
+  DurationRequirement,
+  JobDescriptionSnapshot,
+  JobEvent,
+  JobSighting,
   JobMatch,
   JobPosting,
   JobProfileMatch,
@@ -22,20 +29,27 @@ import type {
 const iso = (d: Date) => d.toISOString();
 const isoOrNull = (d: Date | null) => (d ? d.toISOString() : null);
 
-// --- Duration buckets: the only enum whose values differ between TS and Prisma.
+// --- Duration requirements: the only enum whose values differ between TS and Prisma.
 
-const DURATION_TO_DB: Record<DurationBucket, DbDurationBucket> = {
-  "4": "months_4",
-  "8": "months_8",
-  "12_plus": "months_12_plus",
+const DURATION_TO_DB: Record<DurationRequirement, DbDurationRequirement> = {
+  "4": "up_to_4",
+  "8": "legacy_5_to_8",
+  "12_plus": "legacy_over_8",
+  exactly_4: "exactly_4",
+  up_to_4: "up_to_4",
+  "4_to_8": "months_4_to_8",
+  any: "any",
   unspecified: "unspecified",
+  legacy_5_to_8: "legacy_5_to_8",
+  legacy_over_8: "legacy_over_8",
 };
 const DURATION_FROM_DB = Object.fromEntries(
   Object.entries(DURATION_TO_DB).map(([k, v]) => [v, k]),
-) as Record<DbDurationBucket, DurationBucket>;
+) as Record<DbDurationRequirement, DurationRequirement>;
 
-export const durationToDb = (d: DurationBucket): DbDurationBucket => DURATION_TO_DB[d];
-export const durationFromDb = (d: DbDurationBucket): DurationBucket => DURATION_FROM_DB[d];
+export const durationToDb = (d: DurationRequirement): DbDurationRequirement => DURATION_TO_DB[d];
+export const durationFromDb = (d: DbDurationRequirement): DurationRequirement => DURATION_FROM_DB[d];
+const calendar = (d: Date) => d.toISOString().slice(0, 10);
 
 // --- Query shapes (include clauses live next to their mappers).
 
@@ -96,6 +110,86 @@ export function toJobPosting(row: JobRow): JobPosting {
     postedAt: isoOrNull(row.postedAt),
     discoveredAt: iso(row.firstDiscoveredAt),
     discoveryStatus: row.discoveryStatus,
+    origin: row.origin,
+    version: row.version,
+    description: row.description,
+    experienceRequirement: row.experienceRequirement,
+    // Completeness is guaranteed by the job_postings_salary_complete CHECK constraint.
+    salary:
+      row.salaryCurrency && row.salaryPeriod
+        ? { min: row.salaryMin, max: row.salaryMax, currency: row.salaryCurrency, period: row.salaryPeriod }
+        : null,
+    notes: row.notes,
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+    isDemo: row.isDemo,
+  };
+}
+
+export function toJobSighting(
+  row: Prisma.SourceObservationGetPayload<{ include: { source: { select: { provider: true } } } }>,
+): JobSighting {
+  return {
+    id: row.id,
+    sourceId: row.sourceId,
+    provider: row.source.provider,
+    externalId: row.externalId,
+    sourceUrl: row.sourceUrl,
+    canonicalUrl: row.canonicalUrl,
+    atsPosting:
+      row.atsProvider && row.atsBoardToken && row.atsPostingId
+        ? { provider: row.atsProvider as AtsProvider, boardToken: row.atsBoardToken, postingId: row.atsPostingId }
+        : null,
+    firstSeenAt: iso(row.firstSeenAt),
+    lastSeenAt: iso(row.lastSeenAt),
+  };
+}
+
+export function toDescriptionSnapshot(row: Prisma.JobDescriptionSnapshotGetPayload<object>): JobDescriptionSnapshot {
+  return {
+    id: row.id,
+    jobId: row.jobId,
+    content: row.content,
+    contentHash: row.contentHash,
+    source: row.source,
+    capturedAt: iso(row.capturedAt),
+  };
+}
+
+export function toJobEvent(row: Prisma.JobEventGetPayload<object>): JobEvent {
+  return {
+    id: row.id,
+    jobId: row.jobId,
+    type: row.type,
+    fromValue: row.fromValue,
+    toValue: row.toValue,
+    message: row.message,
+    occurredAt: iso(row.occurredAt),
+    isDemo: row.isDemo,
+  };
+}
+
+export function toApplicationEvent(row: Prisma.ApplicationEventGetPayload<object>): ApplicationEvent {
+  return {
+    id: row.id,
+    applicationId: row.applicationId,
+    type: row.type,
+    fromValue: row.fromValue,
+    toValue: row.toValue,
+    message: row.message,
+    occurredAt: iso(row.occurredAt),
+    isDemo: row.isDemo,
+  };
+}
+
+export function toApplicationInterview(row: Prisma.ApplicationInterviewGetPayload<object>): ApplicationInterview {
+  return {
+    id: row.id,
+    applicationId: row.applicationId,
+    stage: row.stage,
+    occurredOn: calendar(row.occurredOn),
+    notes: row.notes,
+    createdAt: iso(row.createdAt),
     isDemo: row.isDemo,
   };
 }
@@ -214,12 +308,16 @@ export function toSearchProfile(row: ProfileRow): SearchProfile {
   const c = row.criteria;
   return {
     id: row.id,
+    version: row.version,
+    archivedAt: isoOrNull(row.archivedAt),
     name: row.name,
     description: row.description,
     enabled: row.enabled,
     criteria: {
       titleKeywords: c?.titleKeywords ?? [],
       excludedTitleKeywords: c?.excludedTitleKeywords ?? [],
+      includeKeywords: c?.includeKeywords ?? [],
+      excludeKeywords: c?.excludeKeywords ?? [],
       disciplines: c?.disciplines ?? [],
       jobTypes: c?.jobTypes ?? [],
       durations: (c?.durations ?? []).map(durationFromDb),
@@ -236,6 +334,7 @@ export function toSearchProfile(row: ProfileRow): SearchProfile {
       cadence: row.notificationCadence,
     },
     automationMode: row.automationMode,
+    durationReviewRequired: row.durationReviewRequired,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     isDemo: row.isDemo,
@@ -251,8 +350,38 @@ export function toJobProfileMatch(row: EvaluationRow): JobProfileMatch | null {
     dedupeKey: row.job.dedupeKey,
     matchedProfileIds: row.matches.map((m) => m.profileId),
     primaryProfileId: primary.profileId,
+    entries: row.matches.map((m) => ({
+      profileId: m.profileId,
+      profileVersion: m.profileVersion,
+      rank: m.rank,
+      status: m.status,
+      relevance: m.relevance,
+      reasons: m.reasons,
+    })),
+    engineVersion: row.engineVersion,
     evaluatedAt: iso(row.evaluatedAt),
     notifiedAt: isoOrNull(row.notifiedAt),
+    isDemo: row.isDemo,
+  };
+}
+
+export function toEmployerBoard(row: Prisma.EmployerBoardGetPayload<object>): EmployerBoard {
+  return {
+    id: row.id,
+    // Guaranteed by the employer_boards_ats_provider CHECK constraint.
+    provider: row.provider as AtsProvider,
+    employerName: row.employerName,
+    boardToken: row.boardToken,
+    boardUrl: row.boardUrl,
+    enabled: row.enabled,
+    pollIntervalMinutes: row.pollIntervalMinutes,
+    lastCheckedAt: isoOrNull(row.lastCheckedAt),
+    lastSuccessAt: isoOrNull(row.lastSuccessAt),
+    consecutiveFailures: row.consecutiveFailures,
+    lastErrorAt: isoOrNull(row.lastErrorAt),
+    lastErrorMessage: row.lastErrorMessage,
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
     isDemo: row.isDemo,
   };
 }

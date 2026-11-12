@@ -2,7 +2,16 @@
  * DEMO FIXTURES — every company, posting, and score below is fictional.
  * URLs use the reserved `.example` TLD so they can never resolve to a real site.
  */
-import type { Discipline, JobMatch, JobPosting, JobSource } from "@/lib/types";
+import { normalizeJobUrl } from "@/lib/jobs/url";
+import type {
+  Discipline,
+  JobDescriptionSnapshot,
+  JobEvent,
+  JobMatch,
+  JobPosting,
+  JobSighting,
+  JobSource,
+} from "@/lib/types";
 
 export const DEMO_JOB_SOURCES: JobSource[] = [
   {
@@ -37,6 +46,15 @@ export const DEMO_JOB_SOURCES: JobSource[] = [
     provider: "smartrecruiters",
     label: "SmartRecruiters postings",
     description: "Public SmartRecruiters posting API for employers you choose to monitor.",
+    enabled: false,
+    integrationStatus: "planned",
+    lastCheckedAt: null,
+  },
+  {
+    id: "src-company-site",
+    provider: "company_site",
+    label: "Company career sites",
+    description: "Employer career pages that are not on a supported ATS.",
     enabled: false,
     integrationStatus: "planned",
     lastCheckedAt: null,
@@ -80,13 +98,35 @@ const QUALIFICATIONS: Record<Discipline, string> = {
 
 type JobSeed = Omit<
   JobPosting,
-  "responsibilities" | "qualifications" | "isDemo" | "externalId" | "postingUrl"
-> & { slug: string };
+  | "responsibilities"
+  | "qualifications"
+  | "isDemo"
+  | "externalId"
+  | "postingUrl"
+  | "origin"
+  | "version"
+  | "description"
+  | "experienceRequirement"
+  | "salary"
+  | "notes"
+  | "createdAt"
+  | "updatedAt"
+> & { slug: string; extraQualifications?: string[] } & Partial<
+    Pick<JobPosting, "description" | "experienceRequirement" | "salary" | "notes">
+  >;
 
 function job(seed: JobSeed): JobPosting {
-  const { slug, ...rest } = seed;
+  const { slug, extraQualifications = [], description = null, experienceRequirement = null, salary = null, notes = "", ...rest } = seed;
   return {
     ...rest,
+    origin: seed.sourceId === "src-manual" ? "manual" : "automatic",
+    version: 1,
+    description,
+    experienceRequirement,
+    salary,
+    notes,
+    createdAt: seed.discoveredAt,
+    updatedAt: seed.discoveredAt,
     externalId: seed.sourceId === "src-manual" ? null : `demo-${seed.id}`,
     postingUrl: `https://careers.example/${slug}/${seed.id}`,
     responsibilities: [
@@ -96,10 +136,25 @@ function job(seed: JobSeed): JobPosting {
     qualifications: [
       "Currently enrolled in or recently graduated from a Canadian post-secondary program",
       ...seed.disciplines.map((d) => QUALIFICATIONS[d]),
+      ...extraQualifications,
     ],
     isDemo: true,
   };
 }
+
+const SILVERBIRCH_DESCRIPTION = `Silverbirch Studio (fictional) is hiring a Full Stack Developer Co-op for Summer 2027.
+
+What you'll do
+- Build accessible React components for client websites
+- Extend a small TypeScript and PostgreSQL API
+- Write automated tests and take part in code review
+
+What we're looking for
+- Enrolled in a Canadian co-op program
+- No prior professional experience required; projects count
+- Curiosity about design systems
+
+This posting is demo data. The company and role do not exist.`;
 
 export const DEMO_JOBS: JobPosting[] = [
   job({
@@ -117,7 +172,7 @@ export const DEMO_JOBS: JobPosting[] = [
       "Join a small team building control software for fictional warehouse robots, from firmware to the fleet-management service.",
     postedAt: "2026-11-09T13:00:00Z",
     discoveredAt: "2026-11-10T14:12:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-002",
@@ -127,14 +182,15 @@ export const DEMO_JOBS: JobPosting[] = [
     title: "Data Engineering Co-op",
     locations: [{ city: "Toronto", province: "ON", arrangement: "hybrid" }],
     jobType: "co_op",
-    durationMonths: 4,
+    // Deliberately unstated: demonstrates the "needs review" path for duration.
+    durationMonths: null,
     term: "Summer 2027",
     disciplines: ["data", "backend"],
     summary:
       "Help a demo analytics company move nightly batch jobs to an event-driven pipeline and improve data quality checks.",
     postedAt: "2026-11-08T15:30:00Z",
     discoveredAt: "2026-11-10T09:45:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-003",
@@ -151,7 +207,7 @@ export const DEMO_JOBS: JobPosting[] = [
       "Work on the ledger and reconciliation services of a fictional payments startup with a strong testing culture.",
     postedAt: "2026-10-24T12:00:00Z",
     discoveredAt: "2026-10-25T11:20:00Z",
-    discoveryStatus: "shortlisted",
+    discoveryStatus: "saved",
   }),
   job({
     id: "job-004",
@@ -171,7 +227,7 @@ export const DEMO_JOBS: JobPosting[] = [
       "Build scheduling tools for a demo clinic-management platform used across several fictional provinces.",
     postedAt: "2026-10-12T16:00:00Z",
     discoveredAt: "2026-10-13T08:05:00Z",
-    discoveryStatus: "reviewed",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-005",
@@ -188,7 +244,7 @@ export const DEMO_JOBS: JobPosting[] = [
       "Create internal dashboards that visualize simulated power-grid load for operations staff.",
     postedAt: "2026-11-06T17:00:00Z",
     discoveredAt: "2026-11-09T19:30:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-006",
@@ -205,7 +261,7 @@ export const DEMO_JOBS: JobPosting[] = [
       "Evaluate small language-understanding models for a fictional document-search product. French is an asset.",
     postedAt: "2026-11-07T14:00:00Z",
     discoveredAt: "2026-11-09T10:15:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-007",
@@ -222,7 +278,7 @@ export const DEMO_JOBS: JobPosting[] = [
       "Contribute to static-analysis tooling and help harden CI pipelines at a demo security consultancy.",
     postedAt: "2026-10-28T13:00:00Z",
     discoveredAt: "2026-10-29T15:40:00Z",
-    discoveryStatus: "shortlisted",
+    discoveryStatus: "saved",
   }),
   job({
     id: "job-008",
@@ -238,7 +294,7 @@ export const DEMO_JOBS: JobPosting[] = [
     summary: "Build editor tooling that helps designers at a fictional studio iterate on levels faster.",
     postedAt: "2026-10-20T14:00:00Z",
     discoveredAt: "2026-10-21T09:00:00Z",
-    discoveryStatus: "reviewed",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-009",
@@ -254,23 +310,24 @@ export const DEMO_JOBS: JobPosting[] = [
     summary: "Improve the driver companion app for a demo delivery network on Android and iOS.",
     postedAt: "2026-11-03T12:00:00Z",
     discoveredAt: "2026-11-04T13:25:00Z",
-    discoveryStatus: "shortlisted",
+    discoveryStatus: "saved",
   }),
   job({
     id: "job-010",
     slug: "quillstone-software",
     sourceId: "src-ashby",
     company: "Quillstone Software",
-    title: "Junior Software Engineer (New Grad)",
+    title: "Junior Software Engineer",
     locations: [{ city: "Toronto", province: "ON", arrangement: "remote" }],
-    jobType: "new_grad",
+    jobType: "junior",
+    extraQualifications: ["1–2 years of professional software development experience"],
     durationMonths: null,
     term: null,
     disciplines: ["backend", "infrastructure"],
     summary: "Join the platform team of a fictional developer-tools company. Remote within Canada.",
     postedAt: "2026-11-05T15:00:00Z",
     discoveredAt: "2026-11-10T16:50:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-011",
@@ -302,7 +359,7 @@ export const DEMO_JOBS: JobPosting[] = [
     summary: "A 12-month placement improving alerting and incident tooling for a fictional cloud host.",
     postedAt: "2026-11-02T18:00:00Z",
     discoveredAt: "2026-11-08T07:55:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-013",
@@ -337,7 +394,7 @@ export const DEMO_JOBS: JobPosting[] = [
     summary: "Normalize real-time transit feeds for a fictional trip-planning platform.",
     postedAt: "2026-10-30T14:00:00Z",
     discoveredAt: "2026-10-31T09:30:00Z",
-    discoveryStatus: "shortlisted",
+    discoveryStatus: "saved",
   }),
   job({
     id: "job-015",
@@ -347,13 +404,15 @@ export const DEMO_JOBS: JobPosting[] = [
     title: "New Grad Software Engineer",
     locations: [{ city: "Toronto", province: "ON", arrangement: "onsite" }],
     jobType: "new_grad",
+    // Mixed requirements: demonstrates the ambiguous-experience path.
+    extraQualifications: ["0–2 years of experience; 3+ years with payment systems is an asset"],
     durationMonths: null,
     term: "Starting Summer 2027",
     disciplines: ["backend", "full_stack"],
     summary: "Work on idempotent payment APIs and merchant tooling at a demo payments processor.",
     postedAt: "2026-10-26T13:00:00Z",
     discoveredAt: "2026-10-27T14:00:00Z",
-    discoveryStatus: "shortlisted",
+    discoveryStatus: "saved",
   }),
   job({
     id: "job-016",
@@ -369,7 +428,7 @@ export const DEMO_JOBS: JobPosting[] = [
     summary: "Ship classroom features for a fictional education platform. Remote within Canada.",
     postedAt: "2026-10-05T13:00:00Z",
     discoveredAt: "2026-10-06T11:45:00Z",
-    discoveryStatus: "reviewed",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-017",
@@ -385,7 +444,7 @@ export const DEMO_JOBS: JobPosting[] = [
     summary: "A 16-month placement writing firmware for demo networking hardware. Not yet scored.",
     postedAt: "2026-11-10T12:00:00Z",
     discoveredAt: "2026-11-11T08:20:00Z",
-    discoveryStatus: "new",
+    discoveryStatus: "discovered",
   }),
   job({
     id: "job-018",
@@ -399,10 +458,76 @@ export const DEMO_JOBS: JobPosting[] = [
     term: "Summer 2027",
     disciplines: ["full_stack", "frontend"],
     summary: "An example of a manually added posting for a fictional design studio.",
+    description: SILVERBIRCH_DESCRIPTION,
+    experienceRequirement: "No prior professional experience required",
+    salary: { min: 24, max: 28, currency: "CAD", period: "hour" },
+    notes: "Added manually from a (fictional) campus job fair flyer.",
     postedAt: null,
     discoveredAt: "2026-11-07T20:10:00Z",
-    discoveryStatus: "reviewed",
+    discoveryStatus: "discovered",
   }),
+];
+
+/** Fixed UUIDs so fixture mode and the seeded database return identical ids. */
+const demoUuid = (group: number, n: number) =>
+  `00000000-0000-4000-8000-${group.toString(16).padStart(4, "0")}${n.toString(16).padStart(8, "0")}`;
+
+/** A second sighting of one job on another board, to demonstrate canonical-job merging. */
+const SYNDICATED: DemoSighting = {
+  id: demoUuid(0x51, 999),
+  jobId: "job-010",
+  sourceId: "src-lever",
+  provider: "lever",
+  externalId: "demo-job-010-syndicated",
+  sourceUrl: "https://careers.example/quillstone-software/job-010?via=lever",
+  canonicalUrl: normalizeJobUrl("https://careers.example/quillstone-software/job-010?via=lever"),
+  atsPosting: null,
+  firstSeenAt: "2026-11-10T18:30:00Z",
+  lastSeenAt: "2026-11-10T18:30:00Z",
+};
+
+export type DemoSighting = JobSighting & { jobId: string };
+
+/** One sighting per demo job (its primary source), plus one syndicated sighting. */
+export const DEMO_SIGHTINGS: DemoSighting[] = [
+  ...DEMO_JOBS.map((j, i): DemoSighting => ({
+    id: demoUuid(0x51, i + 1),
+    jobId: j.id,
+    sourceId: j.sourceId,
+    provider: DEMO_JOB_SOURCES.find((s) => s.id === j.sourceId)!.provider,
+    externalId: j.externalId,
+    sourceUrl: j.postingUrl,
+    canonicalUrl: j.postingUrl ? normalizeJobUrl(j.postingUrl) : null,
+    atsPosting: null,
+    firstSeenAt: j.discoveredAt,
+    lastSeenAt: j.discoveredAt,
+  })),
+  SYNDICATED,
+];
+
+export const DEMO_DESCRIPTION_SNAPSHOTS: JobDescriptionSnapshot[] = [
+  {
+    id: demoUuid(0x52, 1),
+    jobId: "job-018",
+    content: SILVERBIRCH_DESCRIPTION,
+    // SHA-256 of SILVERBIRCH_DESCRIPTION (verified by lib/fixtures/fixtures.test.ts).
+    contentHash: "7a6231361705ec1c6b5a592173cbb73ca1df5d914b1ae56bacbaeca75bfc4569",
+    source: "manual_submission",
+    capturedAt: "2026-11-07T20:10:00Z",
+  },
+];
+
+export const DEMO_JOB_EVENTS: JobEvent[] = [
+  {
+    id: demoUuid(0x53, 1),
+    jobId: "job-018",
+    type: "created",
+    fromValue: null,
+    toValue: "discovered",
+    message: "Added manually (demo).",
+    occurredAt: "2026-11-07T20:10:00Z",
+    isDemo: true,
+  },
 ];
 
 type MatchSeed = Pick<JobMatch, "jobId" | "fitScore" | "matchedSkills" | "missingSkills" | "reasons">;

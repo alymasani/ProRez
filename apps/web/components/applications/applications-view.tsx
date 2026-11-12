@@ -9,14 +9,14 @@ import { Badge } from "@/components/ui/badge";
 import { NativeSelect } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { ApplicationRow } from "@/lib/applications";
+import type { ApplicationRow } from "@/lib/applications/rows";
 import { formatDate } from "@/lib/format";
 import { MODE_LABELS, PREPARATION_STATUS, SUBMISSION_STATUS } from "@/lib/labels";
 import { PREPARATION_STATUSES, SUBMISSION_STATUSES, type SubmissionStatus } from "@/lib/types";
 
 type SubmissionFilter = SubmissionStatus | "all";
 
-export function ApplicationsView({ rows }: { rows: ApplicationRow[] }) {
+export function ApplicationsView({ rows, writable }: { rows: ApplicationRow[]; writable: boolean }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [submissionFilter, setSubmissionFilter] = useState<SubmissionFilter>("all");
 
@@ -177,7 +177,7 @@ export function ApplicationsView({ rows }: { rows: ApplicationRow[] }) {
         </TabsContent>
       </Tabs>
 
-      <ApplicationDialog row={selected} onOpenChange={(open) => !open && setSelectedId(null)} />
+      <ApplicationDialog row={selected} writable={writable} onOpenChange={(open) => !open && setSelectedId(null)} />
     </>
   );
 }

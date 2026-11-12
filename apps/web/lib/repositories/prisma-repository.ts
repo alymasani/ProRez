@@ -7,6 +7,7 @@ import {
   projectInclude,
   toApplication,
   toApplicationRun,
+  toEmployerBoard,
   toApprovalRequest,
   toCoverLetter,
   toJobMatch,
@@ -17,6 +18,7 @@ import {
   toResume,
   toSearchProfile,
 } from "./prisma-mappers";
+import { countProfileHistory } from "../profiles/service";
 import { DEFAULT_PREFERENCES, type DataRepository } from "./repository";
 
 export function createPrismaRepository(prisma: PrismaClient): DataRepository {
@@ -79,10 +81,29 @@ export function createPrismaRepository(prisma: PrismaClient): DataRepository {
 
     async listSearchProfiles() {
       const rows = await prisma.searchProfile.findMany({
+        where: { archivedAt: null },
         include: profileInclude,
         orderBy: [{ createdAt: "asc" }, { name: "asc" }],
       });
       return rows.map(toSearchProfile);
+    },
+
+    async listArchivedSearchProfiles() {
+      const rows = await prisma.searchProfile.findMany({
+        where: { archivedAt: { not: null } },
+        include: profileInclude,
+        orderBy: [{ archivedAt: "desc" }, { name: "asc" }],
+      });
+      return rows.map(toSearchProfile);
+    },
+
+    async countProfileHistory(profileId) {
+      return countProfileHistory(prisma, profileId);
+    },
+
+    async listEmployerBoards() {
+      const rows = await prisma.employerBoard.findMany({ orderBy: [{ employerName: "asc" }, { provider: "asc" }] });
+      return rows.map(toEmployerBoard);
     },
 
     async getSearchProfile(id) {

@@ -12,6 +12,7 @@ export const ROUTES = [
   { path: "/profiles", heading: "Search profiles" },
   { path: "/profiles/new", heading: "New search profile" },
   { path: "/profiles/profile-coop-4mo", heading: "Four-month SWE co-ops" },
+  { path: "/boards", heading: "Employer boards" },
   { path: "/settings", heading: "Settings" },
 ] as const;
 

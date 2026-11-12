@@ -3,6 +3,7 @@ import type {
   ApplicationRun,
   ApprovalRequest,
   CoverLetterArtifact,
+  EmployerBoard,
   JobPosting,
   JobProfileMatch,
   JobSource,
@@ -38,10 +39,18 @@ export interface DataRepository {
   listCoverLetters(): Promise<CoverLetterArtifact[]>;
   listProjects(): Promise<Project[]>;
 
-  /** Ordered by creation time, then name. */
+  /** Non-archived profiles, ordered by creation time, then name. */
   listSearchProfiles(): Promise<SearchProfile[]>;
+  /** Archived profiles (kept for match history), most recently archived first. */
+  listArchivedSearchProfiles(): Promise<SearchProfile[]>;
+  /** Includes archived profiles so history can always be displayed. */
   getSearchProfile(id: string): Promise<SearchProfile | null>;
+  /** Matches on notified (frozen) evaluations — what forces archiving instead of deletion. */
+  countProfileHistory(profileId: string): Promise<number>;
   getProfileMatchForJob(jobId: string): Promise<JobProfileMatch | null>;
+
+  /** Ordered by employer name, then provider. */
+  listEmployerBoards(): Promise<EmployerBoard[]>;
 
   getDefaultPreferences(): Promise<SearchPreferences>;
 }
@@ -53,4 +62,5 @@ export const DEFAULT_PREFERENCES: SearchPreferences = {
   jobTypes: ["internship", "co_op", "new_grad"],
   durations: ["4"],
   disciplines: ["backend", "full_stack", "infrastructure"],
+  includeRemoteCanadaWide: true,
 };

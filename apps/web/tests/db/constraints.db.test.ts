@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { createSourceAndJob, createTestPrisma, truncateAll } from "./helpers";
+import { TEST_SOURCE_ID, createProfileRow, createSourceAndJob, createTestPrisma, truncateAll } from "./helpers";
 
 const db = createTestPrisma();
 afterAll(() => db.$disconnect());
@@ -29,10 +29,9 @@ describe("canonical jobs and source observations", () => {
 
   it("allows one job to have several observations from different sources", async () => {
     await createSourceAndJob(db);
-    await db.jobSource.create({ data: { id: "src-lever", provider: "lever", label: "Lever", description: "" } });
     await db.sourceObservation.createMany({
       data: [
-        { jobId: "job-a", sourceId: "src-test", externalId: "gh-1", firstSeenAt: T0, lastSeenAt: T0 },
+        { jobId: "job-a", sourceId: TEST_SOURCE_ID, externalId: "gh-1", firstSeenAt: T0, lastSeenAt: T0 },
         { jobId: "job-a", sourceId: "src-lever", externalId: "lv-9", firstSeenAt: T1, lastSeenAt: T1 },
       ],
     });
@@ -45,11 +44,11 @@ describe("canonical jobs and source observations", () => {
     await createSourceAndJob(db, "job-a");
     await createSourceAndJob(db, "job-b");
     await db.sourceObservation.create({
-      data: { jobId: "job-a", sourceId: "src-test", externalId: "gh-1", firstSeenAt: T0, lastSeenAt: T0 },
+      data: { jobId: "job-a", sourceId: TEST_SOURCE_ID, externalId: "gh-1", firstSeenAt: T0, lastSeenAt: T0 },
     });
     await expect(
       db.sourceObservation.create({
-        data: { jobId: "job-b", sourceId: "src-test", externalId: "gh-1", firstSeenAt: T0, lastSeenAt: T0 },
+        data: { jobId: "job-b", sourceId: TEST_SOURCE_ID, externalId: "gh-1", firstSeenAt: T0, lastSeenAt: T0 },
       }),
     ).rejects.toMatchObject(UNIQUE);
   });
@@ -58,8 +57,8 @@ describe("canonical jobs and source observations", () => {
     await createSourceAndJob(db);
     await db.sourceObservation.createMany({
       data: [
-        { jobId: "job-a", sourceId: "src-test", externalId: null, firstSeenAt: T0, lastSeenAt: T0 },
-        { jobId: "job-a", sourceId: "src-test", externalId: null, firstSeenAt: T1, lastSeenAt: T1 },
+        { jobId: "job-a", sourceId: TEST_SOURCE_ID, externalId: null, firstSeenAt: T0, lastSeenAt: T0 },
+        { jobId: "job-a", sourceId: TEST_SOURCE_ID, externalId: null, firstSeenAt: T1, lastSeenAt: T1 },
       ],
     });
     expect(await db.sourceObservation.count()).toBe(2);
@@ -68,21 +67,26 @@ describe("canonical jobs and source observations", () => {
   it("cannot delete a source that still has observations", async () => {
     await createSourceAndJob(db);
     await db.sourceObservation.create({
-      data: { jobId: "job-a", sourceId: "src-test", externalId: "x", firstSeenAt: T0, lastSeenAt: T0 },
+      data: { jobId: "job-a", sourceId: TEST_SOURCE_ID, externalId: "x", firstSeenAt: T0, lastSeenAt: T0 },
     });
-    await expect(db.jobSource.delete({ where: { id: "src-test" } })).rejects.toMatchObject(FOREIGN_KEY);
+    await expect(db.jobSource.delete({ where: { id: TEST_SOURCE_ID } })).rejects.toMatchObject(FOREIGN_KEY);
   });
 
   it("deleting a job cascades to its locations, observations, match and profile matches", async () => {
     await createSourceAndJob(db);
     await db.jobLocation.create({ data: { jobId: "job-a", position: 0, city: "Toronto", province: "ON", arrangement: "hybrid" } });
     await db.sourceObservation.create({
-      data: { jobId: "job-a", sourceId: "src-test", externalId: "x", firstSeenAt: T0, lastSeenAt: T0 },
+      data: { jobId: "job-a", sourceId: TEST_SOURCE_ID, externalId: "x", firstSeenAt: T0, lastSeenAt: T0 },
     });
     await db.jobMatch.create({ data: { jobId: "job-a", fitScore: 80, computedAt: T0 } });
-    await db.searchProfile.create({ data: { id: "p1", name: "P1" } });
+    await createProfileRow(db, "p1");
     await db.jobProfileEvaluation.create({
-      data: { jobId: "job-a", evaluatedAt: T0, matches: { create: [{ profileId: "p1", rank: 0 }] } },
+      data: {
+        jobId: "job-a",
+        evaluatedAt: T0,
+        engineVersion: "test",
+        matches: { create: [{ profileId: "p1", profileVersion: 1, rank: 0, status: "eligible" }] },
+      },
     });
 
     await db.jobPosting.delete({ where: { id: "job-a" } });
@@ -105,54 +109,84 @@ describe("canonical jobs and source observations", () => {
 });
 
 describe("search profiles and deduplicated matches", () => {
-  it("stores criteria 1:1 and deletes them with the profile", async () => {
+  it("stores criteria 1:1 and deletes them with an unreferenced profile", async () => {
     await db.searchProfile.create({
-      data: { id: "p1", name: "Co-ops", criteria: { create: { jobTypes: ["co_op"], durations: ["months_4"] } } },
+      data: { id: "p1", name: "Co-ops", criteria: { create: { jobTypes: ["co_op"], durations: ["exactly_4"] } } },
     });
     await expect(db.profileCriteria.create({ data: { profileId: "p1" } })).rejects.toMatchObject(UNIQUE);
     await db.searchProfile.delete({ where: { id: "p1" } });
     expect(await db.profileCriteria.count()).toBe(0);
   });
 
-  it("enforces unique, non-blank names and a 0–100 minimum fit score", async () => {
+  it("enforces case-insensitive unique names among active profiles only", async () => {
     await db.searchProfile.create({ data: { id: "p1", name: "Co-ops" } });
-    await expect(db.searchProfile.create({ data: { id: "p2", name: "Co-ops" } })).rejects.toMatchObject(UNIQUE);
+    await expect(db.searchProfile.create({ data: { id: "p2", name: " co-OPS " } })).rejects.toMatchObject(UNIQUE);
+    // Archiving frees the name; archived rows must also be disabled.
+    await expect(
+      db.searchProfile.update({ where: { id: "p1" }, data: { archivedAt: T0 } }),
+    ).rejects.toThrow(/search_profiles_archived_disabled/);
+    await db.searchProfile.update({ where: { id: "p1" }, data: { archivedAt: T0, enabled: false } });
+    await db.searchProfile.create({ data: { id: "p2", name: "Co-ops" } });
+    expect(await db.searchProfile.count({ where: { name: "Co-ops" } })).toBe(2);
+  });
+
+  it("enforces non-blank names, a 0–100 minimum fit score and positive versions", async () => {
     await expect(db.searchProfile.create({ data: { id: "p3", name: "  " } })).rejects.toThrow(
       /search_profiles_name_not_blank/,
     );
     await expect(db.searchProfile.create({ data: { id: "p4", name: "X", minFitScore: -1 } })).rejects.toThrow(
       /search_profiles_min_fit_score_range/,
     );
+    await expect(db.searchProfile.create({ data: { id: "p5", name: "Y", version: 0 } })).rejects.toThrow(
+      /search_profiles_version_positive/,
+    );
+  });
+
+  it("keeps one immutable snapshot per profile version", async () => {
+    await createProfileRow(db, "p1");
+    await expect(
+      db.searchProfileVersion.create({ data: { profileId: "p1", version: 1, snapshot: {} } }),
+    ).rejects.toMatchObject(UNIQUE);
+    await expect(
+      db.searchProfileVersion.create({ data: { profileId: "p1", version: 2, snapshot: [] } }),
+    ).rejects.toThrow(/search_profile_versions_snapshot_object/);
   });
 
   it("keeps one evaluation per job with several ranked profiles, each at most once", async () => {
     await createSourceAndJob(db);
-    await db.searchProfile.createMany({ data: [{ id: "p1", name: "A" }, { id: "p2", name: "B" }] });
+    await createProfileRow(db, "p1", "A");
+    await createProfileRow(db, "p2", "B");
+    const match = (profileId: string, rank: number) => ({ profileId, profileVersion: 1, rank, status: "eligible" as const });
+    await db.jobProfileEvaluation.create({
+      data: { jobId: "job-a", evaluatedAt: T0, engineVersion: "test", matches: { create: [match("p1", 0), match("p2", 1)] } },
+    });
+
+    await expect(
+      db.jobProfileEvaluation.create({ data: { jobId: "job-a", evaluatedAt: T1, engineVersion: "test" } }),
+    ).rejects.toMatchObject(UNIQUE);
+    await expect(db.jobProfileMatch.create({ data: { jobId: "job-a", ...match("p1", 5) } })).rejects.toMatchObject(UNIQUE);
+    await expect(db.jobProfileMatch.create({ data: { jobId: "job-a", ...match("p3", 0) } })).rejects.toBeTruthy();
+    await expect(
+      db.jobProfileMatch.create({ data: { jobId: "job-a", profileId: "p2", profileVersion: 9, rank: 2, status: "eligible" } }),
+    ).rejects.toBeTruthy();
+    await expect(
+      db.jobProfileMatch.update({ where: { jobId_profileId: { jobId: "job-a", profileId: "p1" } }, data: { relevance: 101 } }),
+    ).rejects.toThrow(/job_profile_matches_relevance_range/);
+  });
+
+  it("protects match history: a referenced profile or version cannot be deleted", async () => {
+    await createSourceAndJob(db);
+    await createProfileRow(db, "p1");
     await db.jobProfileEvaluation.create({
       data: {
         jobId: "job-a",
         evaluatedAt: T0,
-        matches: { create: [{ profileId: "p1", rank: 0 }, { profileId: "p2", rank: 1 }] },
+        engineVersion: "test",
+        matches: { create: [{ profileId: "p1", profileVersion: 1, rank: 0, status: "eligible" }] },
       },
     });
-
-    await expect(db.jobProfileEvaluation.create({ data: { jobId: "job-a", evaluatedAt: T1 } })).rejects.toMatchObject(
-      UNIQUE,
-    );
-    await expect(db.jobProfileMatch.create({ data: { jobId: "job-a", profileId: "p1", rank: 5 } })).rejects.toMatchObject(
-      UNIQUE,
-    );
-    await expect(
-      db.jobProfileMatch.create({ data: { jobId: "job-a", profileId: "p3", rank: 0 } }),
-    ).rejects.toBeTruthy();
-
-    // Deleting a profile removes only its match row, not the job's evaluation.
-    await db.searchProfile.delete({ where: { id: "p1" } });
-    const evaluation = await db.jobProfileEvaluation.findUniqueOrThrow({
-      where: { jobId: "job-a" },
-      include: { matches: true },
-    });
-    expect(evaluation.matches.map((m) => m.profileId)).toEqual(["p2"]);
+    await expect(db.searchProfile.delete({ where: { id: "p1" } })).rejects.toMatchObject(FOREIGN_KEY);
+    await expect(db.searchProfileVersion.deleteMany({ where: { profileId: "p1" } })).rejects.toMatchObject(FOREIGN_KEY);
   });
 });
 

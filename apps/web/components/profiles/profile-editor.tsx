@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { BellRing, CircleCheck, RotateCcw, Save, ShieldCheck, Zap } from "lucide-react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { BellRing, CircleCheck, LoaderCircle, RotateCcw, Save, ShieldCheck, Zap } from "lucide-react";
+import { createProfileAction, updateProfileAction } from "@/app/profiles/actions";
+import { DeleteProfileButton } from "@/components/profiles/delete-profile-button";
 import { CheckboxGroup, optionsFrom } from "@/components/forms/checkbox-group";
 import { describedBy, Field } from "@/components/forms/field";
 import { FutureAction } from "@/components/future-action";
@@ -16,17 +19,17 @@ import {
   ARRANGEMENT_LABELS,
   AUTOMATION_MODE_LABELS,
   DISCIPLINE_LABELS,
-  DURATION_LABELS,
+  DURATION_REQUIREMENT_LABELS,
   EXPERIENCE_LEVEL_LABELS,
   JOB_TYPE_LABELS,
   NOTIFICATION_CADENCE_LABELS,
   PROVINCE_LABELS,
 } from "@/lib/labels";
-import { durationApplies, parseKeywordList, validateProfileDraft } from "@/lib/profiles/draft";
+import { draftFromProfile, durationApplies, parseKeywordList, validateProfileDraft } from "@/lib/profiles/draft";
 import {
   AUTOMATION_MODES,
   DISCIPLINES,
-  DURATION_BUCKETS,
+  SELECTABLE_DURATION_REQUIREMENTS,
   EXPERIENCE_LEVELS,
   JOB_TYPES,
   NOTIFICATION_CADENCES,
@@ -46,29 +49,168 @@ const MODE_ICONS: Record<AutomationMode, typeof Zap> = {
   notify_only: BellRing,
 };
 
-export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft; isNew: boolean }) {
+type SaveStatus =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "saved"; message: string; warning: string | null }
+  | { kind: "error"; message: string; formErrors: string[] }
+  | { kind: "conflict"; message: string };
+
+function keywordTexts(d: SearchProfileDraft) {
+  return {
+    title: d.criteria.titleKeywords.join(", "),
+    excludedTitle: d.criteria.excludedTitleKeywords.join(", "),
+    include: d.criteria.includeKeywords.join(", "),
+    exclude: d.criteria.excludeKeywords.join(", "),
+    maxYears: d.criteria.maxYearsExperience?.toString() ?? "",
+  };
+}
+
+export interface ProfileEditorProps {
+  initial: SearchProfileDraft;
+  /** null when creating a new profile. */
+  profileId: string | null;
+  version: number | null;
+  saving: { enabled: boolean; reason: string | null };
+  /** Jobs whose stored matches reference this profile (delete vs archive). */
+  matchCount?: number;
+  justCreated?: boolean;
+}
+
+export function ProfileEditor({ initial, profileId, version: initialVersion, saving, matchCount = 0, justCreated = false }: ProfileEditorProps) {
+  const router = useRouter();
+  const isNew = profileId === null;
+  const [baseline, setBaseline] = useState<SearchProfileDraft>(initial);
   const [draft, setDraft] = useState<SearchProfileDraft>(initial);
-  const [includeText, setIncludeText] = useState(initial.criteria.titleKeywords.join(", "));
-  const [excludeText, setExcludeText] = useState(initial.criteria.excludedTitleKeywords.join(", "));
-  const [maxYearsText, setMaxYearsText] = useState(initial.criteria.maxYearsExperience?.toString() ?? "");
+  const [version, setVersion] = useState(initialVersion);
+  const [texts, setTexts] = useState(() => keywordTexts(initial));
   const [showErrors, setShowErrors] = useState(false);
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<SaveStatus>(
+    justCreated ? { kind: "saved", message: "Profile created and saved.", warning: null } : { kind: "idle" },
+  );
+  const [isPending, startTransition] = useTransition();
+  const [reloadRequested, setReloadRequested] = useState(false);
+  const [seenPropVersion, setSeenPropVersion] = useState(initialVersion);
 
   const errors = useMemo(() => validateProfileDraft(draft), [draft]);
   const errorCount = Object.keys(errors).length;
-  const visibleErrors = showErrors ? errors : {};
+  const visibleErrors: Record<string, string | undefined> = showErrors ? { ...serverErrors, ...errors } : {};
   const durationsEnabled = durationApplies(draft);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
+
+  // Fresh server data (after refresh()) replaces local state only when it is a
+  // different version AND there are no unsaved edits — or the user explicitly
+  // asked to load the latest after a conflict. Our own saves are already in sync.
+  if (initialVersion !== seenPropVersion) {
+    setSeenPropVersion(initialVersion);
+    if (initialVersion !== version && (!dirty || reloadRequested)) {
+      setBaseline(initial);
+      setDraft(initial);
+      setTexts(keywordTexts(initial));
+      setVersion(initialVersion);
+      setReloadRequested(false);
+      setShowErrors(false);
+      setServerErrors({});
+      setStatus({ kind: "idle" });
+    }
+  }
+
+  // Protect unsaved edits: closing/reloading the tab, and in-app link clicks.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const onClick = (event: MouseEvent) => {
+      const anchor = (event.target as Element | null)?.closest?.("a[href]");
+      if (!anchor || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      const url = new URL((anchor as HTMLAnchorElement).href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      if (!window.confirm("You have unsaved changes to this profile. Leave without saving?")) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [dirty]);
+
+  function edit(update: (d: SearchProfileDraft) => SearchProfileDraft) {
+    setDraft(update);
+    setServerErrors({});
+    if (status.kind === "saved" || status.kind === "error") setStatus({ kind: "idle" });
+  }
 
   function setCriteria(patch: Partial<ProfileCriteria>) {
-    setDraft((d) => ({ ...d, criteria: { ...d.criteria, ...patch } }));
+    edit((d) => ({ ...d, criteria: { ...d.criteria, ...patch } }));
+  }
+
+  function setText(key: keyof ReturnType<typeof keywordTexts>, value: string) {
+    setTexts((t) => ({ ...t, [key]: value }));
   }
 
   function reset() {
-    setDraft(initial);
-    setIncludeText(initial.criteria.titleKeywords.join(", "));
-    setExcludeText(initial.criteria.excludedTitleKeywords.join(", "));
-    setMaxYearsText(initial.criteria.maxYearsExperience?.toString() ?? "");
+    setDraft(baseline);
+    setTexts(keywordTexts(baseline));
     setShowErrors(false);
+    setServerErrors({});
+    setStatus({ kind: "idle" });
+  }
+
+  function focusFirstError() {
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>("form [aria-invalid='true']")?.focus();
+    });
+  }
+
+  function save() {
+    setShowErrors(true);
+    if (errorCount > 0) {
+      setStatus({ kind: "error", message: "Please fix the highlighted fields.", formErrors: [] });
+      focusFirstError();
+      return;
+    }
+    setStatus({ kind: "saving" });
+    startTransition(async () => {
+      const result =
+        isNew || version === null
+          ? await createProfileAction(draft)
+          : await updateProfileAction(profileId, version, draft);
+
+      if (result.ok) {
+        const saved = draftFromProfile(result.value.profile);
+        setBaseline(saved);
+        setDraft(saved);
+        setTexts(keywordTexts(saved));
+        setVersion(result.value.profile.version);
+        setShowErrors(false);
+        if (isNew) {
+          router.replace(`/profiles/${result.value.profile.id}?created=1`);
+          return;
+        }
+        setStatus({ kind: "saved", message: `Saved as version ${result.value.profile.version}.`, warning: result.value.warning });
+        return;
+      }
+      if (result.code === "version_conflict") {
+        setStatus({ kind: "conflict", message: result.message });
+        return;
+      }
+      setServerErrors(result.fieldErrors ?? {});
+      setStatus({ kind: "error", message: result.message, formErrors: result.formErrors ?? [] });
+      if (result.fieldErrors && Object.keys(result.fieldErrors).length > 0) focusFirstError();
+    });
+  }
+
+  function loadLatest() {
+    // Discards local edits once the latest stored version arrives.
+    setReloadRequested(true);
+    router.refresh();
   }
 
   return (
@@ -92,16 +234,16 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
                 value={draft.name}
                 maxLength={80}
                 placeholder="e.g. Four-month SWE co-ops"
-                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                onChange={(e) => edit((d) => ({ ...d, name: e.target.value }))}
               />
             </Field>
-            <Field id="profile-description" label="Description">
+            <Field id="profile-description" label="Description" error={visibleErrors.description}>
               <Textarea
-                id="profile-description"
+                {...describedBy("profile-description", visibleErrors.description)}
                 rows={2}
                 className="field-sizing-content min-h-16"
                 value={draft.description}
-                onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                onChange={(e) => edit((d) => ({ ...d, description: e.target.value }))}
               />
             </Field>
             <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
@@ -116,7 +258,7 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
               <Switch
                 id="profile-enabled"
                 checked={draft.enabled}
-                onCheckedChange={(enabled) => setDraft((d) => ({ ...d, enabled }))}
+                onCheckedChange={(enabled) => edit((d) => ({ ...d, enabled }))}
               />
             </div>
           </CardContent>
@@ -137,22 +279,59 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
               >
                 <Input
                   {...describedBy("title-keywords", visibleErrors.titleKeywords, true)}
-                  value={includeText}
+                  value={texts.title}
                   placeholder="software, developer, engineer"
                   onChange={(e) => {
-                    setIncludeText(e.target.value);
+                    setText("title", e.target.value);
                     setCriteria({ titleKeywords: parseKeywordList(e.target.value) });
                   }}
                 />
               </Field>
-              <Field id="excluded-keywords" label="Exclude titles containing" hint="Comma-separated.">
+              <Field
+                id="excluded-keywords"
+                label="Exclude titles containing"
+                hint="Comma-separated."
+                error={visibleErrors.excludedTitleKeywords}
+              >
                 <Input
-                  {...describedBy("excluded-keywords", undefined, true)}
-                  value={excludeText}
+                  {...describedBy("excluded-keywords", visibleErrors.excludedTitleKeywords, true)}
+                  value={texts.excludedTitle}
                   placeholder="senior, staff, manager"
                   onChange={(e) => {
-                    setExcludeText(e.target.value);
+                    setText("excludedTitle", e.target.value);
                     setCriteria({ excludedTitleKeywords: parseKeywordList(e.target.value) });
+                  }}
+                />
+              </Field>
+              <Field
+                id="include-keywords"
+                label="Preferred keywords"
+                hint="Anywhere in the posting. Raise relevance only — never exclude a job."
+                error={visibleErrors.includeKeywords}
+              >
+                <Input
+                  {...describedBy("include-keywords", visibleErrors.includeKeywords, true)}
+                  value={texts.include}
+                  placeholder="typescript, distributed systems"
+                  onChange={(e) => {
+                    setText("include", e.target.value);
+                    setCriteria({ includeKeywords: parseKeywordList(e.target.value) });
+                  }}
+                />
+              </Field>
+              <Field
+                id="exclude-keywords"
+                label="Exclude postings mentioning"
+                hint="Anywhere in the posting, e.g. security clearance."
+                error={visibleErrors.excludeKeywords}
+              >
+                <Input
+                  {...describedBy("exclude-keywords", visibleErrors.excludeKeywords, true)}
+                  value={texts.exclude}
+                  placeholder="security clearance, us citizenship"
+                  onChange={(e) => {
+                    setText("exclude", e.target.value);
+                    setCriteria({ excludeKeywords: parseKeywordList(e.target.value) });
                   }}
                 />
               </Field>
@@ -183,7 +362,7 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
             <CheckboxGroup
               legend="Internship duration"
               description={durationsEnabled ? "Leave empty for any length." : "Only applies to internships and co-ops."}
-              options={optionsFrom(DURATION_BUCKETS, DURATION_LABELS)}
+              options={SELECTABLE_DURATION_REQUIREMENTS.map((value) => ({ value, label: DURATION_REQUIREMENT_LABELS[value].label }))}
               value={draft.criteria.durations}
               onChange={(durations) => setCriteria({ durations })}
               disabled={!durationsEnabled && draft.criteria.durations.length === 0}
@@ -209,9 +388,9 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
                   min={0}
                   max={15}
                   placeholder="No limit"
-                  value={maxYearsText}
+                  value={texts.maxYears}
                   onChange={(e) => {
-                    setMaxYearsText(e.target.value);
+                    setText("maxYears", e.target.value);
                     const raw = e.target.value.trim();
                     setCriteria({ maxYearsExperience: raw === "" ? null : Number(raw) });
                   }}
@@ -277,7 +456,7 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
                 max={100}
                 step={5}
                 value={draft.minFitScore}
-                onChange={(e) => setDraft((d) => ({ ...d, minFitScore: Number(e.target.value) }))}
+                onChange={(e) => edit((d) => ({ ...d, minFitScore: Number(e.target.value) }))}
                 className="w-full accent-[var(--primary)]"
               />
             </Field>
@@ -293,7 +472,7 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
                   id="notify-enabled"
                   checked={draft.notifications.enabled}
                   onCheckedChange={(enabled) =>
-                    setDraft((d) => ({ ...d, notifications: { ...d.notifications, enabled } }))
+                    edit((d) => ({ ...d, notifications: { ...d.notifications, enabled } }))
                   }
                 />
               </div>
@@ -306,7 +485,7 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
                   disabled={!draft.notifications.enabled}
                   value={draft.notifications.cadence}
                   onChange={(e) =>
-                    setDraft((d) => ({
+                    edit((d) => ({
                       ...d,
                       notifications: { ...d.notifications, cadence: e.target.value as NotificationCadence },
                     }))
@@ -350,7 +529,7 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
                         name="automation-mode"
                         value={mode}
                         checked={draft.automationMode === mode}
-                        onChange={() => setDraft((d) => ({ ...d, automationMode: mode }))}
+                        onChange={() => edit((d) => ({ ...d, automationMode: mode }))}
                         className="mt-1 size-4 shrink-0 self-start accent-[var(--primary)]"
                       />
                       <span>
@@ -368,28 +547,52 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
           </CardContent>
         </Card>
 
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="ghost" onClick={reset} disabled={!dirty && !showErrors}>
+        <SaveStatusMessage status={status} onLoadLatest={loadLatest} />
+
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+          {!isNew && saving.enabled && profileId ? (
+            <DeleteProfileButton
+              profileId={profileId}
+              profileName={baseline.name}
+              matchCount={matchCount}
+              onDone={() => {
+                setBaseline(draft); // nothing left to protect
+                router.push("/profiles");
+              }}
+              className="sm:mr-auto"
+            />
+          ) : null}
+          <Button type="button" variant="ghost" onClick={reset} disabled={(!dirty && !showErrors) || isPending}>
             <RotateCcw /> Reset
           </Button>
-          <Button type="submit" variant="outline">
+          <Button type="submit" variant="outline" disabled={isPending}>
             <CircleCheck /> Validate
           </Button>
-          <FutureAction variant="default" size="default" reason="Saving profiles requires persistence, planned for a later milestone">
-            <Save /> {isNew ? "Create profile" : "Save changes"}
-          </FutureAction>
+          {saving.enabled ? (
+            <Button type="button" onClick={save} disabled={isPending || (!dirty && !isNew)}>
+              {isPending ? <LoaderCircle className="animate-spin" /> : <Save />}
+              {isPending ? "Saving…" : isNew ? "Create profile" : "Save changes"}
+            </Button>
+          ) : (
+            <FutureAction variant="default" size="default" reason={saving.reason ?? "Saving is unavailable"}>
+              <Save /> {isNew ? "Create profile" : "Save changes"}
+            </FutureAction>
+          )}
         </div>
       </form>
 
       <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
-        <PreviewNotice title="Configuration preview only">
-          Profiles are not saved or evaluated in this milestone. Edits reset when you leave this page.
-        </PreviewNotice>
+        {saving.enabled ? null : (
+          <PreviewNotice title="Read-only demo data">
+            {saving.reason} Edits here are a local preview and reset when you leave this page.
+          </PreviewNotice>
+        )}
         <Card>
           <CardHeader>
             <CardTitle className="flex flex-wrap items-center gap-2">
               {draft.name.trim() || "Untitled profile"}
               {dirty ? <Badge variant="warning">Unsaved</Badge> : null}
+              {!isNew && version !== null ? <Badge variant="muted">v{version}</Badge> : null}
             </CardTitle>
             <CardDescription aria-live="polite">
               {showErrors ? (
@@ -410,6 +613,42 @@ export function ProfileEditor({ initial, isNew }: { initial: SearchProfileDraft;
           </CardContent>
         </Card>
       </aside>
+    </div>
+  );
+}
+
+function SaveStatusMessage({ status, onLoadLatest }: { status: SaveStatus; onLoadLatest: () => void }) {
+  return (
+    <div role="status" aria-live="polite" className="min-h-0">
+      {status.kind === "saving" ? (
+        <p className="text-sm text-muted-foreground">Saving…</p>
+      ) : status.kind === "saved" ? (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-800 dark:text-emerald-300">
+          <p className="font-medium">{status.message}</p>
+          {status.warning ? <p className="mt-1 text-amber-700 dark:text-amber-300">{status.warning}</p> : null}
+        </div>
+      ) : status.kind === "error" ? (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <p className="font-medium">{status.message}</p>
+          {status.formErrors.length > 0 ? (
+            <ul className="mt-1 list-disc pl-5">
+              {status.formErrors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : status.kind === "conflict" ? (
+        <div role="alert" className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+          <p className="font-medium text-amber-900 dark:text-amber-200">{status.message}</p>
+          <p className="text-amber-900/80 dark:text-amber-200/80">
+            Your edits are still here. Copy anything you need, then load the latest version.
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={onLoadLatest}>
+            Discard my edits and load latest
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

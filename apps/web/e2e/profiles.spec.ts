@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { DB_MODE } from "./db-reset";
 
 test.describe("search profiles list", () => {
-  test("multiple profiles can be enabled; toggles are marked unsaved", async ({ page }) => {
+  test("read-only mode: toggles are a local preview marked unsaved", async ({ page }) => {
+    test.skip(DB_MODE, "In database mode toggles persist; see persistence.spec.ts");
     await page.goto("/profiles");
     await expect(page.getByText("3 of 4 profiles enabled")).toBeVisible();
 
@@ -29,7 +31,8 @@ test.describe("search profile editor", () => {
     await expect(page.getByText("Give this profile a name.")).toBeVisible();
     await expect(page.getByText("Select at least one employment type.")).toBeVisible();
     await expect(page.getByText("2 issues to fix.")).toBeVisible();
-    await expect(page.getByRole("button", { name: /^Create profile/ })).toBeDisabled();
+    // Read-only mode shows a disabled control; database mode offers a real save.
+    await expect(page.getByRole("button", { name: /^Create profile/ })).toBeEnabled({ enabled: DB_MODE });
   });
 
   test("existing profile validates, edits update the live summary, and reset restores", async ({ page }) => {

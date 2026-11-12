@@ -1,80 +1,39 @@
 import { describe, expect, it } from "vitest";
-import {
-  EMPTY_MANUAL_SUBMISSION,
-  validateManualSubmission,
-  type ManualSubmissionInput,
-} from "./manual-submission";
+import { EMPTY_MANUAL_JOB_INPUT, validateManualJob, type ManualJobInput } from "./manual-submission";
 
-const valid: ManualSubmissionInput = {
-  ...EMPTY_MANUAL_SUBMISSION,
-  jobUrl: "https://careers.example/acme/123",
-  company: "  Acme Demo  ",
-  title: "Software Developer Co-op",
-  jobType: "co_op",
-  durationMonths: "4",
-  mode: "quick_apply",
-};
+const valid: ManualJobInput = { ...EMPTY_MANUAL_JOB_INPUT, jobUrl: "https://careers.example/acme/123", company: "  Acme Demo  ", title: "Software Developer Co-op", jobType: "co_op", durationMonths: "4" };
 
-describe("validateManualSubmission", () => {
-  it("accepts a valid submission and trims values", () => {
-    const result = validateManualSubmission(valid);
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        jobUrl: "https://careers.example/acme/123",
-        description: null,
-        company: "Acme Demo",
-        title: "Software Developer Co-op",
-        location: null,
-        jobType: "co_op",
-        durationMonths: 4,
-        mode: "quick_apply",
-      },
-    });
-  });
-
-  it("requires a URL or description", () => {
-    const result = validateManualSubmission({ ...valid, jobUrl: "" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.jobUrl).toMatch(/URL, a job description/);
-  });
-
-  it("accepts a description without a URL", () => {
-    const result = validateManualSubmission({ ...valid, jobUrl: "", description: "x".repeat(60) });
+describe("validateManualJob", () => {
+  it("accepts and normalizes a valid submission", () => {
+    const result = validateManualJob(valid);
     expect(result.ok).toBe(true);
-  });
-
-  it("rejects non-http URLs", () => {
-    for (const jobUrl of ["careers.example/job", "javascript:alert(1)", "ftp://host/x"]) {
-      const result = validateManualSubmission({ ...valid, jobUrl });
-      expect(result.ok).toBe(false);
+    if (result.ok) {
+      expect(result.value.company).toBe("Acme Demo");
+      expect(result.value.durationMonths).toBe(4);
+      expect(result.value.url?.canonical).toBe("https://careers.example/acme/123");
     }
   });
-
-  it("rejects too-short descriptions", () => {
-    const result = validateManualSubmission({ ...valid, description: "too short" });
+  it("requires a URL or description", () => {
+    const result = validateManualJob({ ...valid, jobUrl: "" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.jobUrl).toMatch(/URL.*description/i);
+  });
+  it("accepts a description without a URL", () => expect(validateManualJob({ ...valid, jobUrl: "", description: "x".repeat(60) }).ok).toBe(true));
+  it("rejects descriptions that are too short", () => {
+    const result = validateManualJob({ ...valid, description: "too short" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors.description).toBeDefined();
   });
-
-  it("requires company, title, employment type, and mode", () => {
-    const result = validateManualSubmission({
-      ...valid,
-      company: " ",
-      title: "",
-      jobType: "",
-      mode: "auto_submit",
-    });
+  it("requires company, title, and employment type", () => {
+    const result = validateManualJob({ ...valid, company: " ", title: "", jobType: "" });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(Object.keys(result.errors).sort()).toEqual(["company", "jobType", "mode", "title"]);
-    }
+    if (!result.ok) expect(Object.keys(result.errors)).toEqual(expect.arrayContaining(["company", "title", "jobType"]));
   });
-
-  it("treats duration as optional but validates it when present", () => {
-    expect(validateManualSubmission({ ...valid, durationMonths: "" }).ok).toBe(true);
-    for (const durationMonths of ["0", "4.5", "abc", "36"]) {
-      expect(validateManualSubmission({ ...valid, durationMonths }).ok).toBe(false);
-    }
+  it("rejects unsupported URL schemes", () => {
+    for (const jobUrl of ["careers.example/job", "javascript:alert(1)", "ftp://host/x"]) expect(validateManualJob({ ...valid, jobUrl }).ok).toBe(false);
+  });
+  it("validates duration when present", () => {
+    expect(validateManualJob({ ...valid, durationMonths: "" }).ok).toBe(true);
+    for (const durationMonths of ["0", "4.5", "abc", "36"]) expect(validateManualJob({ ...valid, durationMonths }).ok).toBe(false);
   });
 });

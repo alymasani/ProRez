@@ -8,8 +8,9 @@
  *  2. Preparation — progress generating materials       (`Application.preparationStatus`)
  *  3. Submission  — what actually happened with the employer (`Application.submissionStatus`)
  *
- * A job can be "shortlisted" (discovery) with materials "prepared"
- * (preparation) and still be "not_submitted" (submission).
+ * A job can be "saved" (discovery) with materials "ready_for_review"
+ * (preparation) and still be "not_submitted" (submission). Generating
+ * materials NEVER marks anything as applied.
  */
 
 /** ISO-8601 timestamp string, e.g. "2026-11-08T14:30:00Z". */
@@ -39,7 +40,8 @@ export type Province = (typeof PROVINCES)[number];
 export const WORK_ARRANGEMENTS = ["onsite", "hybrid", "remote"] as const;
 export type WorkArrangement = (typeof WORK_ARRANGEMENTS)[number];
 
-export const JOB_TYPES = ["new_grad", "internship", "co_op"] as const;
+/** `junior` covers entry-level roles that are not new-grad programs (Milestone 2B). */
+export const JOB_TYPES = ["new_grad", "junior", "internship", "co_op"] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 export const DISCIPLINES = [
@@ -57,11 +59,38 @@ export const DISCIPLINES = [
 export type Discipline = (typeof DISCIPLINES)[number];
 
 /**
- * Duration buckets used for filtering and preferences. Postings store an exact
- * month count (or null when unknown / permanent); see `durationBucket()`.
+ * Categories for FILTERING the job list by a posting's stated length
+ * (≤ 4 months, 5–8, more than 8, not stated); see `durationBucket()`.
+ * Postings store an exact month count, or null when unknown / permanent.
  */
 export const DURATION_BUCKETS = ["4", "8", "12_plus", "unspecified"] as const;
 export type DurationBucket = (typeof DURATION_BUCKETS)[number];
+
+/**
+ * Duration REQUIREMENTS for search profiles and default settings (Milestone 2C).
+ * A posting passes if it satisfies ANY selected requirement; no selection means
+ * duration is not considered. See lib/matching/duration.ts.
+ * - exactly_4:   stated length is exactly 4 months
+ * - up_to_4:     1–4 months
+ * - 4_to_8:      4–8 months inclusive
+ * - any:         any stated length
+ * - unspecified: also accept postings that do not state a length (otherwise
+ *                they are flagged "needs review")
+ * - legacy_*:    only on profiles converted from the 2A/2B buckets; behave
+ *                exactly as before and cannot be newly selected.
+ */
+export const DURATION_REQUIREMENTS = [
+  "exactly_4",
+  "up_to_4",
+  "4_to_8",
+  "any",
+  "unspecified",
+  "legacy_5_to_8",
+  "legacy_over_8",
+] as const;
+export type DurationRequirement = (typeof DURATION_REQUIREMENTS)[number] | DurationBucket;
+export const SELECTABLE_DURATION_REQUIREMENTS = ["exactly_4", "up_to_4", "4_to_8", "any", "unspecified"] as const;
+export const LEGACY_DURATION_REQUIREMENTS = ["legacy_5_to_8", "legacy_over_8"] as const;
 
 export const APPLICATION_MODES = ["quick_apply", "full_build"] as const;
 export type ApplicationMode = (typeof APPLICATION_MODES)[number];
@@ -106,14 +135,23 @@ export interface JobLocation {
 }
 
 /** Discovery lifecycle — independent of preparation and submission. */
-export const DISCOVERY_STATUSES = [
-  "new",
-  "reviewed",
-  "shortlisted",
-  "dismissed",
-  "expired",
-] as const;
+export const DISCOVERY_STATUSES = ["discovered", "saved", "dismissed", "expired"] as const;
 export type DiscoveryStatus = (typeof DISCOVERY_STATUSES)[number];
+
+/** How a job entered ProRez. */
+export type JobOrigin = "manual" | "automatic";
+
+export const SALARY_CURRENCIES = ["CAD", "USD"] as const;
+export type SalaryCurrency = (typeof SALARY_CURRENCIES)[number];
+export const SALARY_PERIODS = ["hour", "month", "year"] as const;
+export type SalaryPeriod = (typeof SALARY_PERIODS)[number];
+
+export interface JobSalary {
+  min: number | null;
+  max: number | null;
+  currency: SalaryCurrency;
+  period: SalaryPeriod;
+}
 
 export interface JobPosting {
   id: string;
@@ -137,8 +175,81 @@ export interface JobPosting {
   postedAt: IsoDateTime | null;
   discoveredAt: IsoDateTime;
   discoveryStatus: DiscoveryStatus;
+  origin: JobOrigin;
+  /** Details version; bumped on every edit to job details (optimistic concurrency). */
+  version: number;
+  /** Full description as plain text (untrusted input; never rendered as HTML). */
+  description: string | null;
+  /** Experience requirement as stated, e.g. "0–2 years of professional experience". */
+  experienceRequirement: string | null;
+  salary: JobSalary | null;
+  /** The user's own notes about this job. */
+  notes: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
   /** True for development fixtures. Every fixture must set this. */
   isDemo: boolean;
+}
+
+/** One place a job was seen (a source observation). */
+export interface JobSighting {
+  id: string;
+  sourceId: string;
+  provider: SourceProvider;
+  externalId: string | null;
+  /** URL exactly as submitted or reported. */
+  sourceUrl: string | null;
+  /** Normalized URL used for duplicate detection. */
+  canonicalUrl: string | null;
+  /** ATS posting identity recognised from the URL. */
+  atsPosting: { provider: AtsProvider; boardToken: string; postingId: string } | null;
+  firstSeenAt: IsoDateTime;
+  lastSeenAt: IsoDateTime;
+}
+
+export type DescriptionSource = "manual_submission" | "manual_edit" | "source_import";
+
+/** Immutable copy of a description as captured. The earliest one is the original. */
+export interface JobDescriptionSnapshot {
+  id: string;
+  jobId: string;
+  content: string;
+  /** SHA-256 hex of `content`. */
+  contentHash: string;
+  source: DescriptionSource;
+  capturedAt: IsoDateTime;
+}
+
+export const JOB_EVENT_TYPES = [
+  "created",
+  "sighting_added",
+  "discovery_status_changed",
+  "details_updated",
+  "notes_updated",
+  "description_added",
+  "evaluation_changed",
+] as const;
+export type JobEventType = (typeof JOB_EVENT_TYPES)[number];
+
+/** Append-only job history entry. */
+export interface JobEvent {
+  id: string;
+  jobId: string;
+  type: JobEventType;
+  fromValue: string | null;
+  toValue: string | null;
+  message: string | null;
+  occurredAt: IsoDateTime;
+  isDemo: boolean;
+}
+
+/** Everything shown on the job page beyond the posting itself. */
+export interface JobRecord {
+  sightings: JobSighting[];
+  /** Oldest first; the first is the original description. */
+  snapshots: JobDescriptionSnapshot[];
+  /** Newest first. */
+  events: JobEvent[];
 }
 
 export interface JobMatch {
@@ -180,18 +291,25 @@ export interface ApprovalRequest {
 // Applications
 // ---------------------------------------------------------------------------
 
-/** Preparation lifecycle — generating tailored materials. */
+/**
+ * Preparation lifecycle — generating tailored materials. Driven by generation
+ * workflows (a later milestone); never implies anything was submitted.
+ */
 export const PREPARATION_STATUSES = [
   "not_started",
+  "awaiting_approval",
   "queued",
   "generating",
-  "needs_review",
-  "prepared",
+  "ready_for_review",
   "failed",
 ] as const;
 export type PreparationStatus = (typeof PREPARATION_STATUSES)[number];
 
-/** Submission lifecycle — what has actually happened with the employer. */
+/**
+ * Actual application status — what has happened with the employer, as recorded
+ * by the user. Shown as Not applied / Applied / Interviewing / Offer / Rejected /
+ * Withdrawn. Allowed transitions: lib/applications/transitions.ts.
+ */
 export const SUBMISSION_STATUSES = [
   "not_submitted",
   "submitted",
@@ -216,6 +334,47 @@ export interface Application {
   notes: string;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+  isDemo: boolean;
+}
+
+export const APPLICATION_EVENT_TYPES = [
+  "created",
+  "mode_changed",
+  "preparation_status_changed",
+  "submission_status_changed",
+  "submission_recorded",
+  "artifact_linked",
+  "note_updated",
+  "interview_recorded",
+  "submission_date_changed",
+] as const;
+export type ApplicationEventType = (typeof APPLICATION_EVENT_TYPES)[number];
+
+/** Append-only application history entry. */
+export interface ApplicationEvent {
+  id: string;
+  applicationId: string;
+  type: ApplicationEventType;
+  fromValue: string | null;
+  toValue: string | null;
+  message: string | null;
+  occurredAt: IsoDateTime;
+  isDemo: boolean;
+}
+
+export const INTERVIEW_STAGES = ["recruiter_screen", "technical", "take_home", "onsite", "final", "other"] as const;
+export type InterviewStage = (typeof INTERVIEW_STAGES)[number];
+
+/** Calendar date without time zone, "YYYY-MM-DD". */
+export type CalendarDate = string;
+
+export interface ApplicationInterview {
+  id: string;
+  applicationId: string;
+  stage: InterviewStage;
+  occurredOn: CalendarDate;
+  notes: string;
+  createdAt: IsoDateTime;
   isDemo: boolean;
 }
 
@@ -316,16 +475,24 @@ export type ExperienceLevel = (typeof EXPERIENCE_LEVELS)[number];
 export const NOTIFICATION_CADENCES = ["immediate", "daily_digest"] as const;
 export type NotificationCadence = (typeof NOTIFICATION_CADENCES)[number];
 
-/** Criteria a posting must satisfy. Empty arrays mean "no constraint". */
+/**
+ * Criteria a posting must satisfy. Empty arrays mean "no constraint".
+ * See lib/matching/engine.ts for which criteria are hard constraints and which
+ * are soft relevance signals.
+ */
 export interface ProfileCriteria {
-  /** Case-insensitive title phrases; any one may match. */
+  /** Target job titles: case-insensitive phrases; the title must contain at least one. (hard) */
   titleKeywords: string[];
-  /** Postings whose titles contain any of these are excluded. */
+  /** Postings whose titles contain any of these are excluded. (hard) */
   excludedTitleKeywords: string[];
+  /** Preferred terms anywhere in the posting; raise relevance only. (soft) */
+  includeKeywords: string[];
+  /** Postings mentioning any of these anywhere are excluded, e.g. "security clearance". (hard) */
+  excludeKeywords: string[];
   disciplines: Discipline[];
   jobTypes: JobType[];
-  /** Applies only to internship / co-op postings. */
-  durations: DurationBucket[];
+  /** Applies only to internship / co-op postings. See DURATION_REQUIREMENTS. */
+  durations: DurationRequirement[];
   provinces: Province[];
   arrangements: WorkArrangement[];
   /** When true, remote roles anywhere in Canada match regardless of `provinces`. */
@@ -344,6 +511,10 @@ export interface ProfileNotificationSettings {
 
 export interface SearchProfile {
   id: string;
+  /** Increments on every saved change to criteria or settings; used for optimistic concurrency. */
+  version: number;
+  /** Set when a profile with match history is deleted; archived profiles are hidden and never evaluated. */
+  archivedAt: IsoDateTime | null;
   name: string;
   description: string;
   /** Multiple profiles may be enabled at once. */
@@ -353,16 +524,37 @@ export interface SearchProfile {
   minFitScore: number;
   notifications: ProfileNotificationSettings;
   automationMode: AutomationMode;
+  /** True when the 2C migration converted old duration buckets; cleared on the next save. */
+  durationReviewRequired?: boolean;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
   isDemo: boolean;
 }
 
 /** Editable subset of a profile used by the configuration form. */
-export type SearchProfileDraft = Omit<SearchProfile, "id" | "createdAt" | "updatedAt" | "isDemo">;
+export type SearchProfileDraft = Omit<
+  SearchProfile,
+  "id" | "version" | "archivedAt" | "durationReviewRequired" | "createdAt" | "updatedAt" | "isDemo"
+>;
+
+/** How one profile relates to a job in a stored evaluation. */
+export type ProfileMatchStatus = "eligible" | "needs_review";
+
+/** One profile's entry in a job's canonical evaluation. */
+export interface ProfileMatchEntry {
+  profileId: string;
+  /** Profile version (criteria snapshot) the job was evaluated against. */
+  profileVersion: number;
+  rank: number;
+  status: ProfileMatchStatus;
+  /** 0–100 soft relevance; null when the profile has no soft signals. Not the candidate-fit score. */
+  relevance: number | null;
+  /** Human-readable explanations, including anything that needs review. */
+  reasons: string[];
+}
 
 /**
- * Result of evaluating ONE job against ALL enabled profiles (future milestone).
+ * Result of evaluating ONE job against ALL enabled profiles.
  *
  * Deduplication contract: there is at most one record per job, regardless of
  * how many profiles match. `dedupeKey` identifies the underlying posting across
@@ -377,9 +569,41 @@ export interface JobProfileMatch {
   matchedProfileIds: string[];
   /** Profile whose automation mode governs this job (first in priority order). */
   primaryProfileId: string;
+  /** Per-profile detail, in rank order. */
+  entries: ProfileMatchEntry[];
+  /** Matching-rules version that produced this result (lib/matching/engine.ts). */
+  engineVersion: string;
   evaluatedAt: IsoDateTime;
-  /** Null until a notification is actually sent. Always null in Milestone 1. */
+  /** Null until a notification is actually sent. Always null until Telegram exists. */
   notifiedAt: IsoDateTime | null;
+  isDemo: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Employer boards (ATS registry; polling arrives in a later milestone)
+// ---------------------------------------------------------------------------
+
+export const ATS_PROVIDERS = ["greenhouse", "lever", "ashby", "smartrecruiters"] as const;
+export type AtsProvider = (typeof ATS_PROVIDERS)[number];
+
+export interface EmployerBoard {
+  id: string;
+  provider: AtsProvider;
+  employerName: string;
+  /** Provider-specific board identifier, e.g. the Greenhouse board token. */
+  boardToken: string;
+  /** Canonical public board URL derived from provider + token. */
+  boardUrl: string;
+  enabled: boolean;
+  /** Minutes between checks once polling exists. */
+  pollIntervalMinutes: number;
+  lastCheckedAt: IsoDateTime | null;
+  lastSuccessAt: IsoDateTime | null;
+  consecutiveFailures: number;
+  lastErrorAt: IsoDateTime | null;
+  lastErrorMessage: string | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
   isDemo: boolean;
 }
 
@@ -387,10 +611,31 @@ export interface JobProfileMatch {
 // Preferences (Settings page)
 // ---------------------------------------------------------------------------
 
+/** Defaults used to pre-fill NEW search profiles. Profiles stay the source of truth for matching. */
 export interface SearchPreferences {
   provinces: Province[];
   arrangements: WorkArrangement[];
   jobTypes: JobType[];
-  durations: DurationBucket[];
+  durations: DurationRequirement[];
   disciplines: Discipline[];
+  includeRemoteCanadaWide: boolean;
+}
+
+export interface AppSettings {
+  search: SearchPreferences;
+  notifications: {
+    /** Global pause: no notifications for any profile while true. */
+    paused: boolean;
+    /** Default cadence for new profiles. */
+    defaultCadence: NotificationCadence;
+  };
+  workflow: {
+    /** Pre-selected mode when you start tracking an application. */
+    defaultApplicationMode: ApplicationMode;
+    /** Default automation mode for new profiles. */
+    defaultAutomationMode: AutomationMode;
+  };
+  /** 0 until settings are first saved (defaults in use). */
+  version: number;
+  updatedAt: IsoDateTime | null;
 }

@@ -9,7 +9,7 @@ export default function NewJobPage() {
     <div className="space-y-6">
       <PageHeader
         title="Add a job manually"
-        description="Bring in a posting ProRez didn't find on its own. In this milestone the form validates your input and shows a local preview only."
+        description="Save a posting from its URL, pasted description, or both. ProRez will evaluate it against every enabled search profile."
       />
       <ManualJobForm />
     </div>

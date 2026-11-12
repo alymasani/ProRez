@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = Number(process.env.E2E_PORT ?? 3210);
-const BASE_URL = `http://localhost:${PORT}`;
+const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 /**
  * End-to-end tests run against a production build so behaviour matches
@@ -28,7 +28,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run build && npx next start -p ${PORT}`,
+    command: `npm run build && npx next start -H 127.0.0.1 -p ${PORT}`,
     url: BASE_URL,
     // Pinned so a local .env using the database cannot change test results.
     env: { PROREZ_DATA_SOURCE: "fixtures" },

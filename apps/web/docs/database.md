@@ -27,7 +27,26 @@ To have pages read from the database, set this in `.env` and restart `npm run de
 PROREZ_DATA_SOURCE=database
 ```
 
-`fixtures` (the default) ignores the database completely.
+`fixtures` (the default) ignores the database completely and is read-only.
+
+## Saving changes (profiles and employer boards)
+
+Database mode can create, edit, duplicate, enable/disable and delete search profiles, and manage the employer board registry. Writes go through Server Actions (`app/profiles/actions.ts`, `app/boards/actions.ts`). There are no REST endpoints.
+
+Saving is **off unless explicitly enabled**, and in this single-user phase it's restricted to the local machine:
+
+1. `PROREZ_DATA_SOURCE=database` (fixtures are always read-only);
+2. `PROREZ_LOCAL_MUTATIONS=enabled` (any other value keeps the app read-only);
+3. the request's `Host` and `Origin` must both be loopback (`localhost`, `127.0.0.1` or `::1`). This also blocks DNS-rebinding attacks;
+4. `npm run dev` and `npm start` bind to `127.0.0.1`, so other devices can't connect at all.
+
+Every action re-checks access (`lib/auth/mutation-guard.ts`) and parses its input strictly with zod. Unknown fields are rejected, not dropped.
+
+> **Before exposing ProRez on any network:** replace the local-owner check in `lib/auth/mutation-guard.ts` with real authentication and per-resource authorization. Callers depend only on its return type, so the change is contained there.
+
+**Concurrency:** profile edits carry the version they were based on. A stale save is rejected with a "changed elsewhere" message, and your edits stay on screen until you choose to load the latest.
+
+**Delete:** a profile referenced by job results that already produced a notification is **archived** (hidden, disabled, name freed, versions kept) instead of deleted. Otherwise it's deleted with its versions, and live matches are recalculated. See [matching.md](matching.md).
 
 ## Everyday commands
 
@@ -50,6 +69,10 @@ PROREZ_DATA_SOURCE=database
 | Delete **all** local data, including the test database | From the repo root: `docker compose down -v`, then `npm run db:up && npm run db:deploy`. |
 
 `db:reset` asks for confirmation and destroys all data in the database named by `DATABASE_URL`. Only use it on your local dev database.
+
+## Reference data
+
+Migration `20261113000000_profiles_matching_boards` inserts one `job_sources` row per provider (Greenhouse, Lever, Ashby, SmartRecruiters, company sites, manual). These are provider definitions, not demo data, so they exist in every environment, and employer boards reference them. Integration tests keep these rows when truncating.
 
 ## Migrations
 
@@ -79,9 +102,9 @@ Production deployments run `prisma migrate deploy` only and never the seed. The 
 | `npm test` | none | Pure logic, fixtures only. |
 | `npm run test:e2e` | none | Playwright, pinned to `PROREZ_DATA_SOURCE=fixtures`. |
 | `npm run test:db` | `TEST_DATABASE_URL` | Integration tests. The database name **must end in `_test`**. Its `public` schema is dropped and re-migrated on every run. |
-| `npm run test:e2e:db` | `DATABASE_URL` | The same Playwright suite with pages reading from Postgres. Run `db:deploy` and `db:seed` first, because the expectations match the demo data. |
+| `npm run test:e2e:db` | `E2E_DATABASE_URL` | The Playwright suite in database mode with saving enabled, plus persistence tests. The database name **must end in `_e2e`**. It's created if missing, rebuilt and seeded on every run, and re-seeded before each persistence test. It runs one test at a time. Your dev data is never touched. |
 
-The `prorez_test` database is created automatically the first time the Docker volume is initialised (`infra/postgres/init/`). If your volume predates that script, create it once:
+The `prorez_test` and `prorez_e2e` databases are created automatically the first time the Docker volume is initialised (`infra/postgres/init/`). The e2e runner also creates `prorez_e2e` itself if it's missing. If your volume predates the init script, create the test database once:
 
 ```bash
 docker compose exec postgres createdb -U prorez prorez_test   # from the repo root
@@ -98,14 +121,15 @@ page.tsx ──► lib/data.ts ──► PROREZ_DATA_SOURCE
 - Pages import only from `lib/data.ts`. Both repositories implement `DataRepository` (`lib/repositories/repository.ts`).
 - In database mode, `connection()` defers reads to request time. Builds never contact the database, and data is never baked into prerendered HTML.
 - `tests/db/repository.db.test.ts` checks that, after seeding, the database repository returns exactly what the fixture repository returns.
-- There are no write endpoints yet, so nothing in the app can modify the database.
+- Writes go through the services in `lib/profiles/service.ts` and `lib/boards/service.ts`, called only from the guarded Server Actions.
 
 ## Schema overview
 
 | Area | Tables |
 | --- | --- |
 | Sources & canonical jobs | `job_sources`, `job_postings` (canonical, unique `dedupe_key`), `job_locations`, `source_observations` (one per sighting; unique `(source_id, external_id)`), `job_matches` |
-| Search profiles | `search_profiles`, `profile_criteria` (1:1), `job_profile_evaluations` (one per job, which makes notifications deduplicated), `job_profile_matches` (ranked; rank 0 = primary) |
+| Search profiles | `search_profiles` (`version`, `archived_at`; case-insensitive unique name among active profiles), `profile_criteria` (1:1), `search_profile_versions` (immutable snapshots), `job_profile_evaluations` (one per job, which makes notifications deduplicated; `engine_version`, `notified_at`), `job_profile_matches` (ranked; rank 0 = primary; status, relevance, reasons, and the profile version used; RESTRICT foreign keys protect history) |
+| Employer boards | `employer_boards`: many per provider; unique `(provider, board_token)` and unique `board_url`; tokens are lowercase; providers limited to ATS types; polling interval, last checked / last success, consecutive failures, last error. `source_observations.board_id` records which board saw a job. |
 | Applications | `applications` (one per job), `application_events` (append-only history), `workflow_runs` |
 | Artifacts | `resume_artifacts`, `cover_letter_artifacts` (metadata only; `storage_key` reserved for files) |
 | Projects | `projects`, `project_jobs` (many-to-many) |

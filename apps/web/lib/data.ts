@@ -13,9 +13,12 @@ import type { DataRepository } from "@/lib/repositories/repository";
 import { resolveDataSource } from "@/lib/repositories/source";
 import type {
   Application,
+  ApplicationEvent,
+  ApplicationInterview,
   ApplicationRun,
   ApprovalRequest,
   CoverLetterArtifact,
+  EmployerBoard,
   JobPosting,
   JobProfileMatch,
   JobSource,
@@ -23,6 +26,7 @@ import type {
   Project,
   ResumeArtifact,
   SearchPreferences,
+  AppSettings,
   SearchProfile,
 } from "@/lib/types";
 
@@ -74,6 +78,22 @@ export async function getApplicationRuns(): Promise<ApplicationRun[]> {
   return (await repository()).listApplicationRuns();
 }
 
+export async function getApplicationEvents(): Promise<ApplicationEvent[]> {
+  if (resolveDataSource(process.env) === "fixtures") return [];
+  const { connection } = await import("next/server"); await connection();
+  const { getPrisma } = await import("@/lib/db/client");
+  const rows = await getPrisma().applicationEvent.findMany({ orderBy: [{ occurredAt: "desc" }, { id: "desc" }] });
+  return rows.map((r) => ({ id: r.id, applicationId: r.applicationId, type: r.type, fromValue: r.fromValue, toValue: r.toValue, message: r.message, occurredAt: r.occurredAt.toISOString(), isDemo: r.isDemo }));
+}
+
+export async function getApplicationInterviews(): Promise<ApplicationInterview[]> {
+  if (resolveDataSource(process.env) === "fixtures") return [];
+  const { connection } = await import("next/server"); await connection();
+  const { getPrisma } = await import("@/lib/db/client");
+  const rows = await getPrisma().applicationInterview.findMany({ orderBy: [{ occurredOn: "desc" }, { createdAt: "desc" }] });
+  return rows.map((r) => ({ id: r.id, applicationId: r.applicationId, stage: r.stage, occurredOn: r.occurredOn.toISOString().slice(0, 10), notes: r.notes, createdAt: r.createdAt.toISOString(), isDemo: r.isDemo }));
+}
+
 export async function getApprovals(): Promise<ApprovalRequest[]> {
   return (await repository()).listApprovals();
 }
@@ -102,8 +122,36 @@ export async function getProfileMatchForJob(jobId: string): Promise<JobProfileMa
   return (await repository()).getProfileMatchForJob(jobId);
 }
 
+export async function getArchivedSearchProfiles(): Promise<SearchProfile[]> {
+  return (await repository()).listArchivedSearchProfiles();
+}
+
+/** Notified-history counts per profile id (drives delete-vs-archive messaging). */
+export async function getProfileHistoryCounts(profileIds: readonly string[]): Promise<Record<string, number>> {
+  const repo = await repository();
+  const counts = await Promise.all(profileIds.map((id) => repo.countProfileHistory(id)));
+  return Object.fromEntries(profileIds.map((id, i) => [id, counts[i]]));
+}
+
+export async function getEmployerBoards(): Promise<EmployerBoard[]> {
+  return (await repository()).listEmployerBoards();
+}
+
 export async function getDefaultPreferences(): Promise<SearchPreferences> {
   return (await repository()).getDefaultPreferences();
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  if (resolveDataSource(process.env) === "fixtures") {
+    const { defaultSettings } = await import("@/lib/settings/defaults");
+    return defaultSettings();
+  }
+  const { connection } = await import("next/server");
+  await connection();
+  const [{ getPrisma }, { readSettings }] = await Promise.all([
+    import("@/lib/db/client"), import("@/lib/settings/service"),
+  ]);
+  return readSettings(getPrisma());
 }
 
 // ---------------------------------------------------------------------------

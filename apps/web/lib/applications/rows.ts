@@ -1,11 +1,13 @@
 import type {
   Application,
   ApplicationRun,
+  ApplicationEvent,
+  ApplicationInterview,
   CoverLetterArtifact,
   JobPosting,
   Project,
   ResumeArtifact,
-} from "./types";
+} from "../types";
 
 /** An application joined with everything the UI shows next to it. */
 export interface ApplicationRow {
@@ -15,6 +17,8 @@ export interface ApplicationRow {
   coverLetter: CoverLetterArtifact | null;
   project: Project | null;
   runs: ApplicationRun[];
+  events: ApplicationEvent[];
+  interviews: ApplicationInterview[];
 }
 
 export function buildApplicationRows(input: {
@@ -24,6 +28,8 @@ export function buildApplicationRows(input: {
   coverLetters: readonly CoverLetterArtifact[];
   projects: readonly Project[];
   runs: readonly ApplicationRun[];
+  events?: readonly ApplicationEvent[];
+  interviews?: readonly ApplicationInterview[];
 }): ApplicationRow[] {
   const byId = <T extends { id: string }>(items: readonly T[]) => new Map(items.map((i) => [i.id, i]));
   const jobs = byId(input.jobs);
@@ -41,6 +47,8 @@ export function buildApplicationRows(input: {
       runs: input.runs
         .filter((r) => r.applicationId === application.id)
         .sort((a, b) => b.startedAt.localeCompare(a.startedAt)),
+      events: (input.events ?? []).filter((e) => e.applicationId === application.id).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)),
+      interviews: (input.interviews ?? []).filter((i) => i.applicationId === application.id).sort((a, b) => b.occurredOn.localeCompare(a.occurredOn)),
     }))
     .sort((a, b) => b.application.updatedAt.localeCompare(a.application.updatedAt));
 }
