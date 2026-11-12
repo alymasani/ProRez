@@ -160,7 +160,7 @@ export function ApplicationsView({ rows }: { rows: ApplicationRow[] }) {
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <StatusBadge meta={SUBMISSION_STATUS[row.application.submissionStatus]} srPrefix="Submission:" />
-                            <DemoBadge />
+                            <DemoBadge when={row.application.isDemo} />
                           </div>
                           <div className="flex items-center justify-between">
                             <span className="text-xs text-muted-foreground">{MODE_LABELS[row.application.mode]}</span>

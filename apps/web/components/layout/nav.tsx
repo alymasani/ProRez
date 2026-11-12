@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import {
   BriefcaseBusiness,
@@ -58,14 +59,32 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-function isActive(pathname: string, href: NavItem["href"]): boolean {
+function isActive(pathname: string | null, href: NavItem["href"]): boolean {
+  if (pathname === null) return false;
   if (href === "/") return pathname === "/";
   if (href === "/jobs") return pathname === "/jobs" || (pathname.startsWith("/jobs/") && pathname !== "/jobs/new");
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+/**
+ * Main navigation. The active-link highlight needs the pathname, which is not
+ * known at build time for dynamic routes (e.g. /jobs/[jobId]) under Cache
+ * Components, so it is read inside a Suspense boundary. The fallback renders
+ * the same links without a highlight, keeping the shell prerendered.
+ */
 export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
-  const pathname = usePathname();
+  return (
+    <Suspense fallback={<NavList pathname={null} onNavigate={onNavigate} />}>
+      <ActiveNavList onNavigate={onNavigate} />
+    </Suspense>
+  );
+}
+
+function ActiveNavList({ onNavigate }: { onNavigate?: () => void }) {
+  return <NavList pathname={usePathname()} onNavigate={onNavigate} />;
+}
+
+function NavList({ pathname, onNavigate }: { pathname: string | null; onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="flex flex-col gap-5">
       {NAV_SECTIONS.map((section) => (

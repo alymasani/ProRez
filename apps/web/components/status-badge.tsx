@@ -32,7 +32,17 @@ export function StatusBadge({
   );
 }
 
-export function DemoBadge({ className, label = "Demo" }: { className?: string; label?: string }) {
+/** Marks fictional fixture data. Pass `when={record.isDemo}` so real records never show it. */
+export function DemoBadge({
+  className,
+  label = "Demo",
+  when = true,
+}: {
+  className?: string;
+  label?: string;
+  when?: boolean;
+}) {
+  if (!when) return null;
   return (
     <Badge variant="demo" className={className} title="Fictional development fixture — not a real record">
       <FlaskConical aria-hidden="true" />

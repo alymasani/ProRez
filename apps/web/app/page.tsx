@@ -64,11 +64,14 @@ function MetricCard({
   );
 }
 
-export default function OverviewPage() {
-  const jobs = getJobsWithMatches();
-  const approvals = getApprovals();
-  const applications = getApplications();
-  const jobIndex = getJobIndex();
+export default async function OverviewPage() {
+  const [jobs, approvals, applications, jobIndex, runs] = await Promise.all([
+    getJobsWithMatches(),
+    getApprovals(),
+    getApplications(),
+    getJobIndex(),
+    getApplicationRuns(),
+  ]);
   const metrics = computeOverviewMetrics(jobs, approvals, applications);
 
   const recentJobs = [...jobs]
@@ -77,7 +80,7 @@ export default function OverviewPage() {
   const pendingApprovals = approvals
     .filter((a) => a.decision === "pending")
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
-  const activity = buildActivityFeed(applications, getApplicationRuns(), (id) => jobIndex.get(id));
+  const activity = buildActivityFeed(applications, runs, (id) => jobIndex.get(id));
 
   return (
     <div className="space-y-8">
@@ -138,7 +141,7 @@ export default function OverviewPage() {
                           <span className="text-xs text-muted-foreground">
                             {JOB_TYPE_LABELS[job.jobType]} · Found {formatDate(job.discoveredAt)}
                           </span>
-                          <DemoBadge />
+                          <DemoBadge when={job.isDemo} />
                         </div>
                       </div>
                       <FitScore score={match?.fitScore ?? null} />
@@ -179,7 +182,7 @@ export default function OverviewPage() {
                               {job?.company} · Requested {formatDate(approval.requestedAt)}
                             </p>
                           </div>
-                          <DemoBadge />
+                          <DemoBadge when={approval.isDemo} />
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           <FutureAction size="sm">Full Build</FutureAction>

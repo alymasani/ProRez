@@ -43,7 +43,7 @@ function ApplicationDialogBody({ row }: { row: ApplicationRow }) {
     <DialogContent className="sm:max-w-xl">
       <DialogHeader>
         <div className="flex items-center gap-2">
-          <DemoBadge />
+          <DemoBadge when={application.isDemo} />
           <span className="text-xs text-muted-foreground">{MODE_LABELS[application.mode]}</span>
         </div>
         <DialogTitle>{job?.title ?? "Unknown job"}</DialogTitle>

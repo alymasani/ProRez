@@ -49,7 +49,7 @@ export function ProfilesList({ profiles }: { profiles: SearchProfile[] }) {
                 <CardHeader>
                   <CardTitle className="flex flex-wrap items-center gap-2">
                     {profile.name}
-                    <DemoBadge />
+                    <DemoBadge when={profile.isDemo} />
                   </CardTitle>
                   <CardDescription>{profile.description}</CardDescription>
                   <CardAction className="flex items-center gap-2">

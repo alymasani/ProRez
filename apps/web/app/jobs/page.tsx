@@ -25,8 +25,8 @@ function ExplorerSkeleton() {
   );
 }
 
-export default function JobsPage() {
-  const items = getJobsWithMatches();
+export default async function JobsPage() {
+  const items = await getJobsWithMatches();
   return (
     <div className="space-y-6">
       <PageHeader

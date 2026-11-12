@@ -13,15 +13,16 @@ import {
 
 export const metadata: Metadata = { title: "Applications" };
 
-export default function ApplicationsPage() {
-  const rows = buildApplicationRows({
-    applications: getApplications(),
-    jobs: getJobs(),
-    resumes: getResumes(),
-    coverLetters: getCoverLetters(),
-    projects: getProjects(),
-    runs: getApplicationRuns(),
-  });
+export default async function ApplicationsPage() {
+  const [applications, jobs, resumes, coverLetters, projects, runs] = await Promise.all([
+    getApplications(),
+    getJobs(),
+    getResumes(),
+    getCoverLetters(),
+    getProjects(),
+    getApplicationRuns(),
+  ]);
+  const rows = buildApplicationRows({ applications, jobs, resumes, coverLetters, projects, runs });
 
   return (
     <div className="space-y-6">

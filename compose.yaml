@@ -1,0 +1,36 @@
+# Local development infrastructure for ProRez.
+#
+#   docker compose up -d --wait     # start PostgreSQL (from the repo root)
+#   docker compose down             # stop (data is kept in the named volume)
+#   docker compose down -v          # stop AND delete all local data
+#
+# Works with Docker Desktop on macOS and Windows. The port is bound to
+# 127.0.0.1 only, so the database is never exposed on your network.
+# Credentials are for local development only; override them via a `.env`
+# file next to this compose file (see apps/web/.env.example).
+
+name: prorez
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PROREZ_DB_USER:-prorez}
+      POSTGRES_PASSWORD: ${PROREZ_DB_PASSWORD:-prorez_local_dev}
+      POSTGRES_DB: ${PROREZ_DB_NAME:-prorez_dev}
+      # Created by infra/postgres/init/01-create-test-database.sh
+      PROREZ_TEST_DB_NAME: ${PROREZ_TEST_DB_NAME:-prorez_test}
+    ports:
+      - "127.0.0.1:${PROREZ_DB_PORT:-5433}:5432"
+    volumes:
+      - prorez-postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  prorez-postgres-data:

@@ -3,9 +3,8 @@ import { getApplications, getApprovals, getJobsWithMatches } from "./data";
 import { computeOverviewMetrics } from "./metrics";
 
 describe("computeOverviewMetrics (demo fixtures)", () => {
-  const metrics = computeOverviewMetrics(getJobsWithMatches(), getApprovals(), getApplications());
-
-  it("derives counts from fixture data", () => {
+  it("derives counts from fixture data", async () => {
+    const metrics = computeOverviewMetrics(await getJobsWithMatches(), await getApprovals(), await getApplications());
     expect(metrics.totalDiscovered).toBe(18);
     // New + fit >= 70: job-001, 002, 005, 010 (job-006 64, job-012 68, job-017 unscored).
     expect(metrics.newMatching).toBe(4);
@@ -18,12 +17,12 @@ describe("computeOverviewMetrics (demo fixtures)", () => {
 });
 
 describe("fixtures", () => {
-  it("marks every job as demo data", () => {
-    expect(getJobsWithMatches().every(({ job, match }) => job.isDemo && (match?.isDemo ?? true))).toBe(true);
+  it("marks every job as demo data", async () => {
+    expect((await getJobsWithMatches()).every(({ job, match }) => job.isDemo && (match?.isDemo ?? true))).toBe(true);
   });
 
-  it("only uses reserved .example URLs", () => {
-    for (const { job } of getJobsWithMatches()) {
+  it("only uses reserved .example URLs", async () => {
+    for (const { job } of await getJobsWithMatches()) {
       if (job.postingUrl) expect(new URL(job.postingUrl).hostname.endsWith(".example")).toBe(true);
     }
   });

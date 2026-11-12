@@ -1,101 +1,109 @@
 /**
- * Read-only data access for Milestone 1.
+ * The data boundary for pages. Every page reads through these functions and
+ * never imports fixtures or Prisma directly.
  *
- * Every function here returns in-memory demo fixtures. This module is the
- * single seam to replace with real persistence in a later milestone; pages and
- * components should import from here rather than from `lib/fixtures/*`.
+ * The backing store is chosen by PROREZ_DATA_SOURCE (see lib/repositories/source.ts):
+ * - "fixtures" (default): fictional demo data, fully static and deterministic.
+ * - "database": PostgreSQL via Prisma. Reads are deferred to request time with
+ *   `connection()`, so builds never contact the database and data is never
+ *   baked into prerendered HTML.
  */
-import { DEMO_APPLICATION_RUNS, DEMO_APPLICATIONS, DEMO_APPROVALS } from "@/lib/fixtures/applications";
-import { DEMO_COVER_LETTERS, DEMO_PROJECTS, DEMO_RESUMES } from "@/lib/fixtures/artifacts";
-import { DEMO_JOB_MATCHES, DEMO_JOB_SOURCES, DEMO_JOBS } from "@/lib/fixtures/jobs";
-import { DEMO_JOB_PROFILE_MATCHES, DEMO_SEARCH_PROFILES } from "@/lib/fixtures/profiles";
+import { createFixtureRepository } from "@/lib/repositories/fixture-repository";
+import type { DataRepository } from "@/lib/repositories/repository";
+import { resolveDataSource } from "@/lib/repositories/source";
 import type {
-  JobProfileMatch,
-  SearchProfile,
   Application,
   ApplicationRun,
   ApprovalRequest,
   CoverLetterArtifact,
   JobPosting,
+  JobProfileMatch,
   JobSource,
   JobWithMatch,
   Project,
   ResumeArtifact,
   SearchPreferences,
+  SearchProfile,
 } from "@/lib/types";
 
-const matchesByJobId = new Map(DEMO_JOB_MATCHES.map((m) => [m.jobId, m]));
+let fixtureRepository: DataRepository | undefined;
+let databaseRepository: DataRepository | undefined;
 
-export function getJobSources(): JobSource[] {
-  return DEMO_JOB_SOURCES;
+async function repository(): Promise<DataRepository> {
+  if (resolveDataSource(process.env) === "fixtures") {
+    fixtureRepository ??= createFixtureRepository();
+    return fixtureRepository;
+  }
+  const { connection } = await import("next/server");
+  await connection();
+  if (!databaseRepository) {
+    const [{ getPrisma }, { createPrismaRepository }] = await Promise.all([
+      import("@/lib/db/client"),
+      import("@/lib/repositories/prisma-repository"),
+    ]);
+    databaseRepository = createPrismaRepository(getPrisma());
+  }
+  return databaseRepository;
 }
 
-export function getJobs(): JobPosting[] {
-  return DEMO_JOBS;
+export async function getJobSources(): Promise<JobSource[]> {
+  return (await repository()).listJobSources();
 }
 
-export function getJobsWithMatches(): JobWithMatch[] {
-  return DEMO_JOBS.map((job) => ({ job, match: matchesByJobId.get(job.id) ?? null }));
+export async function getJobs(): Promise<JobPosting[]> {
+  return (await repository()).listJobs();
 }
 
-export function getJobWithMatch(id: string): JobWithMatch | null {
-  const job = DEMO_JOBS.find((j) => j.id === id);
-  return job ? { job, match: matchesByJobId.get(job.id) ?? null } : null;
+export async function getJobsWithMatches(): Promise<JobWithMatch[]> {
+  return (await repository()).listJobsWithMatches();
 }
 
-export function getApplications(): Application[] {
-  return DEMO_APPLICATIONS;
+export async function getJobWithMatch(id: string): Promise<JobWithMatch | null> {
+  return (await repository()).getJobWithMatch(id);
 }
 
-export function getApplicationForJob(jobId: string): Application | null {
-  return DEMO_APPLICATIONS.find((a) => a.jobId === jobId) ?? null;
+export async function getApplications(): Promise<Application[]> {
+  return (await repository()).listApplications();
 }
 
-export function getJobSource(id: string): JobSource | null {
-  return DEMO_JOB_SOURCES.find((s) => s.id === id) ?? null;
+export async function getApplicationForJob(jobId: string): Promise<Application | null> {
+  return (await repository()).getApplicationForJob(jobId);
 }
 
-export function getApplicationRuns(): ApplicationRun[] {
-  return DEMO_APPLICATION_RUNS;
+export async function getApplicationRuns(): Promise<ApplicationRun[]> {
+  return (await repository()).listApplicationRuns();
 }
 
-export function getApprovals(): ApprovalRequest[] {
-  return DEMO_APPROVALS;
+export async function getApprovals(): Promise<ApprovalRequest[]> {
+  return (await repository()).listApprovals();
 }
 
-export function getResumes(): ResumeArtifact[] {
-  return DEMO_RESUMES;
+export async function getResumes(): Promise<ResumeArtifact[]> {
+  return (await repository()).listResumes();
 }
 
-export function getCoverLetters(): CoverLetterArtifact[] {
-  return DEMO_COVER_LETTERS;
+export async function getCoverLetters(): Promise<CoverLetterArtifact[]> {
+  return (await repository()).listCoverLetters();
 }
 
-export function getProjects(): Project[] {
-  return DEMO_PROJECTS;
+export async function getProjects(): Promise<Project[]> {
+  return (await repository()).listProjects();
 }
 
-export function getSearchProfiles(): SearchProfile[] {
-  return DEMO_SEARCH_PROFILES;
+export async function getSearchProfiles(): Promise<SearchProfile[]> {
+  return (await repository()).listSearchProfiles();
 }
 
-export function getSearchProfile(id: string): SearchProfile | null {
-  return DEMO_SEARCH_PROFILES.find((p) => p.id === id) ?? null;
+export async function getSearchProfile(id: string): Promise<SearchProfile | null> {
+  return (await repository()).getSearchProfile(id);
 }
 
-export function getProfileMatchForJob(jobId: string): JobProfileMatch | null {
-  return DEMO_JOB_PROFILE_MATCHES.find((m) => m.jobId === jobId) ?? null;
+export async function getProfileMatchForJob(jobId: string): Promise<JobProfileMatch | null> {
+  return (await repository()).getProfileMatchForJob(jobId);
 }
 
-/** Demo default preferences used to pre-fill the Settings page. */
-export function getDefaultPreferences(): SearchPreferences {
-  return {
-    provinces: ["ON", "BC", "QC", "NS"],
-    arrangements: ["hybrid", "remote"],
-    jobTypes: ["internship", "co_op", "new_grad"],
-    durations: ["4"],
-    disciplines: ["backend", "full_stack", "infrastructure"],
-  };
+export async function getDefaultPreferences(): Promise<SearchPreferences> {
+  return (await repository()).getDefaultPreferences();
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +114,11 @@ export interface JobIndex {
   get(id: string | null | undefined): JobPosting | undefined;
 }
 
-export function getJobIndex(): JobIndex {
-  const map = new Map(DEMO_JOBS.map((j) => [j.id, j]));
+export function toJobIndex(jobs: readonly JobPosting[]): JobIndex {
+  const map = new Map(jobs.map((j) => [j.id, j]));
   return { get: (id) => (id ? map.get(id) : undefined) };
+}
+
+export async function getJobIndex(): Promise<JobIndex> {
+  return toJobIndex(await getJobs());
 }

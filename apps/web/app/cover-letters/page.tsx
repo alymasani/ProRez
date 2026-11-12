@@ -7,8 +7,9 @@ import { toDocumentItems } from "@/lib/documents";
 
 export const metadata: Metadata = { title: "Cover letters" };
 
-export default function CoverLettersPage() {
-  const items = toDocumentItems(getCoverLetters(), getJobIndex());
+export default async function CoverLettersPage() {
+  const [letters, jobIndex] = await Promise.all([getCoverLetters(), getJobIndex()]);
+  const items = toDocumentItems(letters, jobIndex);
   return (
     <div className="space-y-6">
       <PageHeader

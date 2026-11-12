@@ -1,0 +1,644 @@
+// ProRez persistence model (Milestone 2A).
+//
+// Design notes
+// - `job_postings` is the canonical, deduplicated job. Each place a job was seen
+//   (ATS board, manual entry) is a `source_observations` row pointing at it.
+// - Discovery, preparation, and submission are separate columns/enums and must
+//   never be merged.
+// - Constraints Prisma cannot express (CHECK constraints, partial unique
+//   indexes) live in the migration SQL; see prisma/migrations/*_init.
+// - `is_demo` marks development fixtures. The seed refuses to run against
+//   production; see lib/db/seed-guard.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Shared vocabularies (values match lib/types.ts)
+// ---------------------------------------------------------------------------
+
+enum Province {
+  AB
+  BC
+  MB
+  NB
+  NL
+  NS
+  NT
+  NU
+  ON
+  PE
+  QC
+  SK
+  YT
+
+  @@map("province")
+}
+
+enum WorkArrangement {
+  onsite
+  hybrid
+  remote
+
+  @@map("work_arrangement")
+}
+
+enum JobType {
+  new_grad
+  internship
+  co_op
+
+  @@map("job_type")
+}
+
+enum Discipline {
+  backend
+  frontend
+  full_stack
+  mobile
+  infrastructure
+  data
+  machine_learning
+  embedded
+  security
+  qa_automation
+
+  @@map("discipline")
+}
+
+/// Duration buckets for profile criteria. TS values "4" | "8" | "12_plus" | "unspecified"
+/// are not valid identifiers, so the repository maps them (lib/data/prisma-mappers.ts).
+enum DurationBucket {
+  months_4       @map("4")
+  months_8       @map("8")
+  months_12_plus @map("12_plus")
+  unspecified
+
+  @@map("duration_bucket")
+}
+
+enum ExperienceLevel {
+  student
+  new_grad
+  junior
+
+  @@map("experience_level")
+}
+
+enum ApplicationMode {
+  quick_apply
+  full_build
+
+  @@map("application_mode")
+}
+
+// ---------------------------------------------------------------------------
+// Sources & canonical jobs
+// ---------------------------------------------------------------------------
+
+enum SourceProvider {
+  greenhouse
+  lever
+  ashby
+  smartrecruiters
+  company_site
+  manual
+
+  @@map("source_provider")
+}
+
+enum SourceIntegrationStatus {
+  planned
+  not_configured
+  connected
+  error
+
+  @@map("source_integration_status")
+}
+
+enum DiscoveryStatus {
+  new
+  reviewed
+  shortlisted
+  dismissed
+  expired
+
+  @@map("discovery_status")
+}
+
+model JobSource {
+  id                String                  @id
+  provider          SourceProvider          @unique
+  label             String
+  description       String
+  enabled           Boolean                 @default(false)
+  integrationStatus SourceIntegrationStatus @default(planned) @map("integration_status")
+  lastCheckedAt     DateTime?               @map("last_checked_at") @db.Timestamptz(3)
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  observations SourceObservation[]
+
+  @@map("job_sources")
+}
+
+/// Canonical job record. One row per real-world posting regardless of how many
+/// sources reported it.
+model JobPosting {
+  id                String          @id
+  /// Normalized identity (company|title|location) used to merge observations.
+  dedupeKey         String          @unique @map("dedupe_key")
+  company           String
+  title             String
+  jobType           JobType         @map("job_type")
+  durationMonths    Int?            @map("duration_months")
+  term              String?
+  disciplines       Discipline[]
+  summary           String          @default("")
+  responsibilities  String[]
+  qualifications    String[]
+  /// Preferred link to the posting (usually from the primary observation).
+  postingUrl        String?         @map("posting_url")
+  postedAt          DateTime?       @map("posted_at") @db.Timestamptz(3)
+  firstDiscoveredAt DateTime        @map("first_discovered_at") @db.Timestamptz(3)
+  discoveryStatus   DiscoveryStatus @default(new) @map("discovery_status")
+  /// Primary source for display; every sighting is in `observations`.
+  primarySourceId   String?         @map("primary_source_id")
+  isDemo            Boolean         @default(false) @map("is_demo")
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  locations         JobLocation[]
+  observations      SourceObservation[]
+  match             JobMatch?
+  profileEvaluation JobProfileEvaluation?
+  application       Application?
+  approvals         ApprovalRequest[]
+  resumes           ResumeArtifact[]
+  coverLetters      CoverLetterArtifact[]
+  projectLinks      ProjectJob[]
+
+  @@index([discoveryStatus])
+  @@index([firstDiscoveredAt(sort: Desc)])
+  @@index([jobType])
+  @@map("job_postings")
+}
+
+model JobLocation {
+  id          String          @id @default(uuid()) @db.Uuid
+  jobId       String          @map("job_id")
+  /// Display order; 0 is the primary location.
+  position    Int
+  city        String
+  province    Province
+  arrangement WorkArrangement
+
+  job JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, position])
+  @@index([province])
+  @@map("job_locations")
+}
+
+/// One sighting of a canonical job on one source.
+model SourceObservation {
+  id          String   @id @default(uuid()) @db.Uuid
+  jobId       String   @map("job_id")
+  sourceId    String   @map("source_id")
+  /// The source's own identifier (null for manual entries).
+  externalId  String?  @map("external_id")
+  sourceUrl   String?  @map("source_url")
+  rawTitle    String?  @map("raw_title")
+  /// Original payload for audit / re-parsing. Never rendered directly.
+  payload     Json?
+  firstSeenAt DateTime @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt  DateTime @map("last_seen_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  job    JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  source JobSource  @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceId, externalId])
+  @@index([jobId])
+  @@map("source_observations")
+}
+
+/// Candidate-fit result for a job (one current score per job).
+model JobMatch {
+  jobId         String   @id @map("job_id")
+  /// 0–100, enforced by CHECK constraint in the migration.
+  fitScore      Int      @map("fit_score")
+  matchedSkills String[] @map("matched_skills")
+  missingSkills String[] @map("missing_skills")
+  reasons       String[]
+  computedAt    DateTime @map("computed_at") @db.Timestamptz(3)
+  isDemo        Boolean  @default(false) @map("is_demo")
+
+  job JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([fitScore(sort: Desc)])
+  @@map("job_matches")
+}
+
+// ---------------------------------------------------------------------------
+// Search profiles
+// ---------------------------------------------------------------------------
+
+enum AutomationMode {
+  approval_required
+  quick_generate
+  notify_only
+
+  @@map("automation_mode")
+}
+
+enum NotificationChannel {
+  telegram
+
+  @@map("notification_channel")
+}
+
+enum NotificationCadence {
+  immediate
+  daily_digest
+
+  @@map("notification_cadence")
+}
+
+model SearchProfile {
+  id                   String              @id
+  name                 String              @unique
+  description          String              @default("")
+  enabled              Boolean             @default(true)
+  /// 0–100, enforced by CHECK constraint in the migration.
+  minFitScore          Int                 @default(70) @map("min_fit_score")
+  automationMode       AutomationMode      @default(approval_required) @map("automation_mode")
+  notificationsEnabled Boolean             @default(true) @map("notifications_enabled")
+  notificationChannel  NotificationChannel @default(telegram) @map("notification_channel")
+  notificationCadence  NotificationCadence @default(immediate) @map("notification_cadence")
+  isDemo               Boolean             @default(false) @map("is_demo")
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  criteria ProfileCriteria?
+  matches  JobProfileMatch[]
+
+  @@index([enabled])
+  @@map("search_profiles")
+}
+
+/// Matching criteria for a profile (1:1). Empty arrays mean "no constraint".
+model ProfileCriteria {
+  profileId               String            @id @map("profile_id")
+  titleKeywords           String[]          @map("title_keywords")
+  excludedTitleKeywords   String[]          @map("excluded_title_keywords")
+  disciplines             Discipline[]
+  jobTypes                JobType[]         @map("job_types")
+  durations               DurationBucket[]
+  provinces               Province[]
+  arrangements            WorkArrangement[]
+  includeRemoteCanadaWide Boolean           @default(true) @map("include_remote_canada_wide")
+  experienceLevels        ExperienceLevel[] @map("experience_levels")
+  maxYearsExperience      Int?              @map("max_years_experience")
+
+  profile SearchProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("profile_criteria")
+}
+
+/// Result of evaluating one job against all enabled profiles — at most one per
+/// job, which is what makes notifications deduplicated.
+model JobProfileEvaluation {
+  jobId       String    @id @map("job_id")
+  evaluatedAt DateTime  @map("evaluated_at") @db.Timestamptz(3)
+  /// Set only once a notification has actually been sent.
+  notifiedAt  DateTime? @map("notified_at") @db.Timestamptz(3)
+  isDemo      Boolean   @default(false) @map("is_demo")
+
+  job     JobPosting        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  matches JobProfileMatch[]
+
+  @@map("job_profile_evaluations")
+}
+
+/// One profile that a job satisfied. `rank` 0 is the primary profile whose
+/// automation mode governs the job.
+model JobProfileMatch {
+  jobId     String @map("job_id")
+  profileId String @map("profile_id")
+  rank      Int
+
+  evaluation JobProfileEvaluation @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  profile    SearchProfile        @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@id([jobId, profileId])
+  @@unique([jobId, rank])
+  @@index([profileId])
+  @@map("job_profile_matches")
+}
+
+// ---------------------------------------------------------------------------
+// Applications
+// ---------------------------------------------------------------------------
+
+enum PreparationStatus {
+  not_started
+  queued
+  generating
+  needs_review
+  prepared
+  failed
+
+  @@map("preparation_status")
+}
+
+enum SubmissionStatus {
+  not_submitted
+  submitted
+  interviewing
+  offer
+  rejected
+  withdrawn
+
+  @@map("submission_status")
+}
+
+/// One application per canonical job.
+model Application {
+  id                String            @id
+  jobId             String            @unique @map("job_id")
+  mode              ApplicationMode
+  preparationStatus PreparationStatus @default(not_started) @map("preparation_status")
+  submissionStatus  SubmissionStatus  @default(not_submitted) @map("submission_status")
+  /// Recorded by the user. CHECK constraint ties this to submission_status.
+  submittedAt       DateTime?         @map("submitted_at") @db.Timestamptz(3)
+  resumeId          String?           @unique @map("resume_id")
+  coverLetterId     String?           @unique @map("cover_letter_id")
+  projectId         String?           @map("project_id")
+  notes             String            @default("")
+  isDemo            Boolean           @default(false) @map("is_demo")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  job         JobPosting           @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  resume      ResumeArtifact?      @relation("SelectedResume", fields: [resumeId], references: [id], onDelete: SetNull)
+  coverLetter CoverLetterArtifact? @relation("SelectedCoverLetter", fields: [coverLetterId], references: [id], onDelete: SetNull)
+  project     Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  events       ApplicationEvent[]
+  runs         WorkflowRun[]
+  resumes      ResumeArtifact[]      @relation("ApplicationResumes")
+  coverLetters CoverLetterArtifact[] @relation("ApplicationCoverLetters")
+
+  @@index([preparationStatus])
+  @@index([submissionStatus])
+  @@index([updatedAt(sort: Desc)])
+  @@map("applications")
+}
+
+enum ApplicationEventType {
+  created
+  mode_changed
+  preparation_status_changed
+  submission_status_changed
+  submission_recorded
+  artifact_linked
+  note_updated
+
+  @@map("application_event_type")
+}
+
+/// Append-only history for an application.
+model ApplicationEvent {
+  id            String               @id @default(uuid()) @db.Uuid
+  applicationId String               @map("application_id")
+  type          ApplicationEventType
+  fromValue     String?              @map("from_value")
+  toValue       String?              @map("to_value")
+  message       String?
+  occurredAt    DateTime             @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  isDemo        Boolean              @default(false) @map("is_demo")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, occurredAt])
+  @@map("application_events")
+}
+
+enum RunKind {
+  resume
+  cover_letter
+  project
+  full_build
+
+  @@map("run_kind")
+}
+
+enum RunStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+
+  @@map("run_status")
+}
+
+/// One execution of a generation workflow (maps to `ApplicationRun` in lib/types.ts).
+model WorkflowRun {
+  id            String    @id
+  applicationId String    @map("application_id")
+  kind          RunKind
+  status        RunStatus @default(queued)
+  startedAt     DateTime  @map("started_at") @db.Timestamptz(3)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(3)
+  summary       String    @default("")
+  errorMessage  String?   @map("error_message")
+  isDemo        Boolean   @default(false) @map("is_demo")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, startedAt(sort: Desc)])
+  @@index([status])
+  @@map("workflow_runs")
+}
+
+// ---------------------------------------------------------------------------
+// Generated artifacts
+// ---------------------------------------------------------------------------
+
+enum GenerationStatus {
+  draft
+  generating
+  ready
+  failed
+
+  @@map("generation_status")
+}
+
+enum CoverLetterTone {
+  formal
+  conversational
+  concise
+
+  @@map("cover_letter_tone")
+}
+
+/// Metadata only; file contents will live in artifact storage (`storage_key`).
+model ResumeArtifact {
+  id                String           @id
+  applicationId     String?          @map("application_id")
+  jobId             String?          @map("job_id")
+  version           String
+  title             String
+  generationStatus  GenerationStatus @default(draft) @map("generation_status")
+  baseTemplate      String           @map("base_template")
+  highlightedSkills String[]         @map("highlighted_skills")
+  pageCount         Int?             @map("page_count")
+  storageKey        String?          @map("storage_key")
+  isDemo            Boolean          @default(false) @map("is_demo")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  application Application? @relation("ApplicationResumes", fields: [applicationId], references: [id], onDelete: SetNull)
+  job         JobPosting?  @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  selectedBy  Application? @relation("SelectedResume")
+
+  @@unique([applicationId, version])
+  @@index([jobId])
+  @@index([createdAt(sort: Desc)])
+  @@map("resume_artifacts")
+}
+
+model CoverLetterArtifact {
+  id               String           @id
+  applicationId    String?          @map("application_id")
+  jobId            String?          @map("job_id")
+  version          String
+  title            String
+  generationStatus GenerationStatus @default(draft) @map("generation_status")
+  baseTemplate     String           @map("base_template")
+  tone             CoverLetterTone
+  wordCount        Int?             @map("word_count")
+  storageKey       String?          @map("storage_key")
+  isDemo           Boolean          @default(false) @map("is_demo")
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  application Application? @relation("ApplicationCoverLetters", fields: [applicationId], references: [id], onDelete: SetNull)
+  job         JobPosting?  @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  selectedBy  Application? @relation("SelectedCoverLetter")
+
+  @@unique([applicationId, version])
+  @@index([jobId])
+  @@index([createdAt(sort: Desc)])
+  @@map("cover_letter_artifacts")
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+enum CheckStatus {
+  not_run
+  pending
+  passing
+  failing
+
+  @@map("check_status")
+}
+
+enum RepositoryVisibility {
+  private
+  public
+
+  @@map("repository_visibility")
+}
+
+model Project {
+  id             String               @id
+  name           String
+  description    String               @default("")
+  technologies   String[]
+  repoOwner      String               @map("repo_owner")
+  repoName       String               @map("repo_name")
+  repoVisibility RepositoryVisibility @default(private) @map("repo_visibility")
+  /// Always false until GitHub publishing exists.
+  repoPublished  Boolean              @default(false) @map("repo_published")
+  repoUrl        String?              @map("repo_url")
+  buildStatus    CheckStatus          @default(not_run) @map("build_status")
+  testStatus     CheckStatus          @default(not_run) @map("test_status")
+  isDemo         Boolean              @default(false) @map("is_demo")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  jobLinks     ProjectJob[]
+  applications Application[]
+
+  @@unique([repoOwner, repoName])
+  @@map("projects")
+}
+
+/// Many-to-many: a project can support several jobs and vice versa.
+model ProjectJob {
+  projectId String   @map("project_id")
+  jobId     String   @map("job_id")
+  /// Order in which jobs are listed on the project.
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  job     JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, jobId])
+  @@index([jobId])
+  @@map("project_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Approvals (future Telegram decisions)
+// ---------------------------------------------------------------------------
+
+enum ApprovalChannel {
+  telegram
+  dashboard
+
+  @@map("approval_channel")
+}
+
+enum ApprovalDecision {
+  pending
+  full_build
+  quick_apply
+  skip
+  expired
+
+  @@map("approval_decision")
+}
+
+/// A request for a Full Build / Quick Apply / Skip decision. A partial unique
+/// index (migration SQL) allows at most one *pending* request per job.
+model ApprovalRequest {
+  id                String           @id
+  jobId             String           @map("job_id")
+  channel           ApprovalChannel
+  decision          ApprovalDecision @default(pending)
+  requestedAt       DateTime         @map("requested_at") @db.Timestamptz(3)
+  respondedAt       DateTime?        @map("responded_at") @db.Timestamptz(3)
+  /// Telegram identifiers, populated once the bot exists.
+  telegramChatId    String?          @map("telegram_chat_id")
+  telegramMessageId String?          @map("telegram_message_id")
+  isDemo            Boolean          @default(false) @map("is_demo")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  job JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([decision, requestedAt(sort: Desc)])
+  @@map("approval_requests")
+}

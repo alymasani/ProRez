@@ -118,7 +118,7 @@ function DocumentCard({ item }: { item: DocumentItem }) {
       <CardContent className="flex-1 space-y-3">
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusBadge meta={GENERATION_STATUS[artifact.generationStatus]} srPrefix="Generation status:" />
-          <DemoBadge />
+          <DemoBadge when={artifact.isDemo} />
         </div>
         <dl className="space-y-1.5 text-sm">
           <div>

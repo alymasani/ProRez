@@ -26,7 +26,7 @@ export function JobListItem({ item }: { item: JobWithMatch }) {
                 {ARRANGEMENT_LABELS[a]}
               </Badge>
             ))}
-            <DemoBadge />
+            <DemoBadge when={job.isDemo} />
           </div>
           <div>
             <h3 className="font-medium group-hover:text-primary">{job.title}</h3>

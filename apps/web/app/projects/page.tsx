@@ -13,9 +13,8 @@ import { CHECK_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Projects" };
 
-export default function ProjectsPage() {
-  const projects = getProjects();
-  const jobs = getJobIndex();
+export default async function ProjectsPage() {
+  const [projects, jobs] = await Promise.all([getProjects(), getJobIndex()]);
 
   return (
     <div className="space-y-6">
@@ -38,7 +37,7 @@ export default function ProjectsPage() {
                 <CardHeader>
                   <div className="flex flex-wrap items-center gap-2">
                     <CardTitle className="font-mono text-base">{project.name}</CardTitle>
-                    <DemoBadge />
+                    <DemoBadge when={project.isDemo} />
                   </div>
                   <p className="text-sm text-muted-foreground">{project.description}</p>
                 </CardHeader>
@@ -71,9 +70,13 @@ export default function ProjectsPage() {
                           <GitBranch className="size-3.5" aria-hidden="true" />
                           {project.repository.owner}/{project.repository.name}
                         </span>
-                        <Badge variant="muted">
-                          <Lock aria-hidden="true" /> Not published
-                        </Badge>
+                        {project.repository.published ? (
+                          <Badge variant="success">Published</Badge>
+                        ) : (
+                          <Badge variant="muted">
+                            <Lock aria-hidden="true" /> Not published
+                          </Badge>
+                        )}
                       </dd>
                     </div>
                     <div className="space-y-1 sm:col-span-2">

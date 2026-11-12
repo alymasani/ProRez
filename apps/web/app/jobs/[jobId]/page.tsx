@@ -12,11 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getApplicationForJob,
-  getJobSource,
+  getJobSources,
   getJobWithMatch,
-  getJobs,
   getProfileMatchForJob,
-  getSearchProfile,
+  getSearchProfiles,
 } from "@/lib/data";
 import { formatDate, formatDateTime, formatDuration, formatLocation } from "@/lib/format";
 import {
@@ -30,13 +29,9 @@ import {
   SUBMISSION_STATUS,
 } from "@/lib/labels";
 
-export function generateStaticParams() {
-  return getJobs().map((job) => ({ jobId: job.id }));
-}
-
 export async function generateMetadata({ params }: PageProps<"/jobs/[jobId]">): Promise<Metadata> {
   const { jobId } = await params;
-  const item = getJobWithMatch(jobId);
+  const item = await getJobWithMatch(jobId);
   return { title: item ? `${item.job.title} — ${item.job.company}` : "Job not found" };
 }
 
@@ -51,13 +46,18 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 
 export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]">) {
   const { jobId } = await params;
-  const item = getJobWithMatch(jobId);
+  const item = await getJobWithMatch(jobId);
   if (!item) notFound();
 
   const { job, match } = item;
-  const source = getJobSource(job.sourceId);
-  const application = getApplicationForJob(job.id);
-  const profileMatch = getProfileMatchForJob(job.id);
+  const [sources, application, profileMatch, profiles] = await Promise.all([
+    getJobSources(),
+    getApplicationForJob(job.id),
+    getProfileMatchForJob(job.id),
+    getSearchProfiles(),
+  ]);
+  const source = sources.find((s) => s.id === job.sourceId) ?? null;
+  const profilesById = new Map(profiles.map((p) => [p.id, p]));
 
   return (
     <div className="space-y-6">
@@ -72,7 +72,7 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
           <span className="flex flex-wrap items-center gap-1.5">
             <StatusBadge meta={DISCOVERY_STATUS[job.discoveryStatus]} srPrefix="Discovery status:" />
             <Badge variant="secondary">{JOB_TYPE_LABELS[job.jobType]}</Badge>
-            <DemoBadge label="Demo posting" />
+            <DemoBadge when={job.isDemo} label="Demo posting" />
           </span>
         }
         title={job.title}
@@ -219,7 +219,7 @@ export default async function JobDetailPage({ params }: PageProps<"/jobs/[jobId]
               {profileMatch ? (
                 <ul className="space-y-2">
                   {profileMatch.matchedProfileIds.map((id) => {
-                    const profile = getSearchProfile(id);
+                    const profile = profilesById.get(id);
                     return (
                       <li key={id} className="flex items-center justify-between gap-2 text-sm">
                         <Link href={`/profiles/${id}`} className="flex min-w-0 items-center gap-2 hover:underline">

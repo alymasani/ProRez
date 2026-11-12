@@ -6,21 +6,17 @@ import { PageHeader } from "@/components/page-header";
 import { ProfileEditor } from "@/components/profiles/profile-editor";
 import { DemoBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { getSearchProfile, getSearchProfiles } from "@/lib/data";
+import { getSearchProfile } from "@/lib/data";
 import { draftFromProfile } from "@/lib/profiles/draft";
-
-export function generateStaticParams() {
-  return getSearchProfiles().map((p) => ({ profileId: p.id }));
-}
 
 export async function generateMetadata({ params }: PageProps<"/profiles/[profileId]">): Promise<Metadata> {
   const { profileId } = await params;
-  return { title: getSearchProfile(profileId)?.name ?? "Profile not found" };
+  return { title: (await getSearchProfile(profileId))?.name ?? "Profile not found" };
 }
 
 export default async function EditProfilePage({ params }: PageProps<"/profiles/[profileId]">) {
   const { profileId } = await params;
-  const profile = getSearchProfile(profileId);
+  const profile = await getSearchProfile(profileId);
   if (!profile) notFound();
 
   return (
@@ -30,7 +26,7 @@ export default async function EditProfilePage({ params }: PageProps<"/profiles/[
           <ArrowLeft /> All profiles
         </Link>
       </Button>
-      <PageHeader eyebrow={<DemoBadge label="Demo profile" />} title={profile.name} description={profile.description} />
+      <PageHeader eyebrow={<DemoBadge when={profile.isDemo} label="Demo profile" />} title={profile.name} description={profile.description} />
       {/* key resets editor state when switching between profiles */}
       <ProfileEditor key={profile.id} initial={draftFromProfile(profile)} isNew={false} />
     </div>

@@ -30,6 +30,8 @@ export default defineConfig({
   webServer: {
     command: `npm run build && npx next start -p ${PORT}`,
     url: BASE_URL,
+    // Pinned so a local .env using the database cannot change test results.
+    env: { PROREZ_DATA_SOURCE: "fixtures" },
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
   },

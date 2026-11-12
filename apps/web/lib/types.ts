@@ -275,11 +275,12 @@ export type DocumentArtifact = ResumeArtifact | CoverLetterArtifact;
 export type CheckStatus = "not_run" | "pending" | "passing" | "failing";
 
 export interface RepositoryReference {
-  /** Planned owner/name. Nothing is published in Milestone 1. */
+  /** Planned owner/name. */
   owner: string;
   name: string;
   visibility: "private" | "public";
-  published: false;
+  /** False until GitHub publishing exists. */
+  published: boolean;
 }
 
 export interface Project {

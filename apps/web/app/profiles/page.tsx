@@ -9,7 +9,8 @@ import { getSearchProfiles } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Search profiles" };
 
-export default function ProfilesPage() {
+export default async function ProfilesPage() {
+  const profiles = await getSearchProfiles();
   return (
     <div className="space-y-6">
       <PageHeader
@@ -27,7 +28,7 @@ export default function ProfilesPage() {
         These example profiles show the configuration model. Toggles and edits are local to this page; matching jobs
         against profiles and sending notifications arrive in later milestones.
       </PreviewNotice>
-      <ProfilesList profiles={getSearchProfiles()} />
+      <ProfilesList profiles={profiles} />
     </div>
   );
 }
