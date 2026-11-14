@@ -14,7 +14,7 @@ export default function BoardsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Employer boards"
-        description="Employer job boards on Greenhouse, Lever, Ashby and SmartRecruiters. Enabled boards are synced automatically by the background worker; Sync now imports a board's published Canadian entry-level postings immediately, through the provider's official public API."
+        description="Career sources: Greenhouse, Lever, Ashby and SmartRecruiters boards, Workday career sites and company career pages. Enabled sources are synced automatically by the background worker; Sync now imports a source's published Canadian entry-level postings immediately."
       />
       <Suspense fallback={<TableSkeleton label="Loading employer boards…" rows={4} />}>
         <BoardsContent />

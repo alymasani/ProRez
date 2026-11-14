@@ -44,7 +44,8 @@ import { AtsError, type HttpTransport } from "./http";
 import { normalizePosting, type ImportedJob } from "./normalize";
 import { ATS_ADAPTERS } from "./registry";
 import { nextSyncAfter, type RunOutcome, type WorkerConfig } from "./schedule";
-import type { AtsAdapter, ProviderPosting } from "./types";
+import type { AtsAdapter, ExtractionLimits, ProviderPosting } from "./types";
+import type { SiteFetcher } from "../discovery/net";
 
 type Tx = Prisma.TransactionClient;
 
@@ -59,7 +60,14 @@ export const SOURCE_ID_BY_PROVIDER: Record<AtsProvider, string> = {
   lever: "src-lever",
   ashby: "src-ashby",
   smartrecruiters: "src-smartrecruiters",
+  workday: "src-workday",
+  company_site: "src-company-site",
 };
+
+/** Workday and generic sites are paced and page-by-page, so they get longer. */
+export function syncTimeoutFor(provider: AtsProvider): number {
+  return provider === "workday" || provider === "company_site" ? 5 * 60_000 : SYNC_TIMEOUT_MS;
+}
 
 export type SyncTriggerKind = "manual" | "scheduled";
 
@@ -110,6 +118,10 @@ export interface SyncOptions {
   /** Retry/backoff settings for scheduling the next automatic run. */
   schedule?: Pick<WorkerConfig, "maxRetries" | "retryBaseMs">;
   random?: () => number;
+  /** SSRF-safe site fetcher for generic sources (defaults to transport.site()). */
+  site?: SiteFetcher;
+  /** Per-provider extraction limits (Workday / generic). */
+  limits?: Partial<Record<AtsProvider, Partial<ExtractionLimits>>>;
 }
 
 type Outcome = "created" | "updated" | "unchanged" | "reactivated" | "duplicate";
@@ -160,6 +172,7 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
   let complete = false;
   const details: Detail[] = [];
   const toEvaluate = new Set<string>();
+  const extraction: { strategy: string | null; pages: number } = { strategy: null, pages: 0 };
 
   const finish = async (
     status: "succeeded" | "partial" | "failed",
@@ -188,6 +201,10 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
           durationMs,
           ...counts,
           complete,
+          extractionStrategy: extraction.strategy,
+          pagesFetched: extraction.pages,
+          // Description enrichment is tracked separately from listing completeness.
+          descriptionComplete: status === "failed" ? null : counts.enrichmentIncomplete === 0,
           errorCode: error?.code ?? null,
           errorMessage: error?.message ?? null,
           details: details.slice(0, MAX_DETAIL_ENTRIES),
@@ -215,6 +232,8 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
                 lastErrorCode: status === "partial" ? "incomplete" : null,
                 lastErrorMessage: status === "partial" ? (error?.message ?? null) : null,
                 nextSyncAt,
+                ...(extraction.strategy ? { extractionStrategy: extraction.strategy } : {}),
+                ...(status === "succeeded" ? { lastCompleteSnapshotAt: finishedAt } : {}),
               },
       }),
     ]);
@@ -223,13 +242,19 @@ export async function syncBoard(prisma: PrismaClient, boardId: string, options: 
 
   try {
     // --- 2. Fetch
-    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(SYNC_TIMEOUT_MS)]) : AbortSignal.timeout(SYNC_TIMEOUT_MS);
+    const limit = syncTimeoutFor(provider);
+    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(limit)]) : AbortSignal.timeout(limit);
     const result = await adapter.fetchPostings(board.boardToken, {
       transport: options.transport,
       signal,
       region: board.region === "eu" ? "eu" : null,
       enrichedPostingIds: await enrichedPostingIds(prisma, provider, board.boardToken),
+      site: options.site,
+      limits: options.limits?.[provider],
     });
+    extraction.strategy = result.strategy ?? (provider === "workday" ? "workday_cxs" : provider === "company_site" ? null : "ats_api");
+    extraction.pages = result.requests;
+    for (const d of result.diagnostics ?? []) details.push({ postingId: "", kind: "warning", message: d.slice(0, 300) });
     counts.fetched = result.postings.length;
     counts.invalid = result.invalidItems ?? 0;
     complete = result.complete;

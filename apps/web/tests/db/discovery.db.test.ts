@@ -209,12 +209,15 @@ describe("idempotency, duplicates and concurrency", () => {
       await runDiscovery(deps({ boards, search, siteFetcher: sites }), { trigger: "manual" });
       advance(60 * 24 * 8); // past the query cooldown
     }
-    expect(await db.discoveryCandidate.count()).toBe(1);
+    // One ATS candidate; plus (Milestone 3D) the verified company's own careers
+    // page, queued exactly once by the company-domain source.
+    expect(await db.discoveryCandidate.count({ where: { provider: "greenhouse" } })).toBe(1);
+    expect(await db.discoveryCandidate.findMany({ where: { provider: "company_site" }, select: { boardToken: true, source: true } })).toEqual([{ boardToken: "acme-robotics.ca/careers", source: "company_domain" }]);
     expect(await db.employerBoard.count()).toBe(1);
     expect(await db.company.count()).toBe(1);
     expect(await db.employerBoard.count({ where: { nextSyncAt: { not: null } } })).toBe(1);
     const runs = await db.discoveryRun.findMany({ orderBy: { startedAt: "asc" } });
-    expect(runs.map((r) => r.newCandidates)).toEqual([1, 0, 0]);
+    expect(runs.map((r) => r.newCandidates)).toEqual([1, 1, 0]);
   });
 
   it("detects a previously registered board and links it without changing it", async () => {

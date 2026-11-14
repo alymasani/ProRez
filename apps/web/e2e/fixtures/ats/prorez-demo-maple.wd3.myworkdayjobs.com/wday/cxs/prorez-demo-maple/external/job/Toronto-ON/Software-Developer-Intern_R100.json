@@ -1,0 +1,14 @@
+{
+  "jobPostingInfo": {
+    "id": "fixture-1",
+    "title": "Software Developer Intern",
+    "jobDescription": "<p>FICTIONAL FIXTURE — Maple Demo Systems is not a real company.</p><p>You will build backend services in TypeScript for a 4-month internship. Responsibilities include writing tests and reviewing code.</p><p>Qualifications: coursework in software engineering. Apply with your resume.</p>",
+    "location": "Toronto, ON",
+    "timeType": "Full time",
+    "jobReqId": "R100",
+    "startDate": "2026-11-01",
+    "country": { "descriptor": "Canada" },
+    "externalUrl": "https://prorez-demo-maple.wd3.myworkdayjobs.com/External/job/Toronto-ON/Software-Developer-Intern_R100"
+  },
+  "hiringOrganization": { "name": "Maple Demo Systems", "url": "" }
+}

@@ -20,9 +20,8 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import readline from "node:readline";
 import type { PrismaClient } from "../generated/prisma/client";
-import { recognizeAtsUrl } from "../boards/board-url";
 import { prismaErrorCode } from "../mutations/result";
-import { recordEvidence, upsertCandidate } from "./candidates";
+import { recognizeSourceUrl, recordEvidence, upsertCandidate } from "./candidates";
 
 export const IMPORT_DEFAULT_MAX_ROWS = 50_000;
 export const IMPORT_MAX_FILE_BYTES = 200 * 1024 * 1024;
@@ -107,7 +106,7 @@ export async function importCommonCrawlFile(
         break;
       }
       summary.rows++;
-      const r = recognizeAtsUrl(row.url);
+      const r = recognizeSourceUrl(row.url, true);
       if (!r) {
         summary.ignored++;
         continue;

@@ -427,7 +427,7 @@ export function toEmployerBoard(
   const leased = row.syncLeaseExpiresAt !== null && row.syncLeaseExpiresAt > now;
   return {
     id: row.id,
-    // Guaranteed by the employer_boards_ats_provider CHECK constraint.
+    // Guaranteed by the employer_boards_source_provider CHECK constraint.
     provider: row.provider as AtsProvider,
     employerName: row.employerName,
     boardToken: row.boardToken,
@@ -441,6 +441,9 @@ export function toEmployerBoard(
     region: row.region === "eu" ? "eu" : null,
     origin: row.origin,
     companyDomain: live.companyDomain ?? null,
+    extractionStrategy: (row.extractionStrategy as EmployerBoard["extractionStrategy"]) ?? null,
+    locale: row.locale,
+    lastCompleteSnapshotAt: isoOrNull(row.lastCompleteSnapshotAt),
     lastCheckedAt: isoOrNull(row.lastCheckedAt),
     lastSuccessAt: isoOrNull(row.lastSuccessAt),
     consecutiveFailures: row.consecutiveFailures,

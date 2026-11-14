@@ -68,6 +68,15 @@ export const DEMO_JOB_SOURCES: JobSource[] = [
     integrationStatus: "planned",
     lastCheckedAt: null,
   },
+  {
+    id: "src-workday",
+    provider: "workday",
+    label: "Workday career sites",
+    description: "Public Workday career sites (*.myworkdayjobs.com) for employers you monitor.",
+    enabled: false,
+    integrationStatus: "planned",
+    lastCheckedAt: null,
+  },
 ];
 
 const RESPONSIBILITIES: Record<Discipline, string> = {

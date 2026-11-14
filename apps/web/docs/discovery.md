@@ -1,8 +1,8 @@
 # Automatic board discovery (Milestone 3C)
 
-Discovery finds employer job boards on the four supported ATS providers (Greenhouse, Lever, Ashby and SmartRecruiters), verifies them, and registers the trustworthy ones. Registered boards are synced by the existing worker exactly like boards you add by hand ([ats-sync.md](ats-sync.md)).
+Discovery finds employer job boards on the four supported ATS providers (Greenhouse, Lever, Ashby and SmartRecruiters), Workday career sites and company careers pages, verifies them, and registers the trustworthy ones. Registered sources are synced by the existing worker exactly like boards you add by hand ([ats-sync.md](ats-sync.md)).
 
-Workday and generic career sites are not covered (Milestone 3D).
+Workday and careers-page specifics (URL formats, extraction strategies, routing, completeness, rendering): [career-sources.md](career-sources.md).
 
 ## How it works
 
@@ -15,6 +15,10 @@ sources ─▶ candidates ─▶ verification ─▶ registration ─▶ 3B work
    - **Search** (`lib/discovery/search.ts`): Tavily Search by default, or Brave when explicitly selected.
    - **Your saved jobs** (`existing_jobs`): boards referenced by jobs you added that are not registered yet. Free, and needs no credentials.
    - **Common Crawl** (`lib/discovery/import.ts`): a bounded file you import (see below).
+   - **Verified company domains** (`company_domain`, Milestone 3D): `https://{domain}/careers` for companies whose careers page has not been examined yet (10 per run, free).
+   - **Careers pages** (`career_page`): boards a company careers page links or redirects to.
+
+   Search and Common Crawl also yield Workday career sites (`site:myworkdayjobs.com` queries) and company careers pages (unrestricted careers queries; only careers-landing URLs on company domains are kept).
 2. **Candidates** (`discovery_candidates`) are unique by provider + board token, so every URL variant of a board collapses into one row: board page, posting, embed or API URL.
 3. **Verification** (`lib/discovery/verify.ts`):
    - An already-registered board is linked, never modified.
@@ -30,6 +34,7 @@ sources ─▶ candidates ─▶ verification ─▶ registration ─▶ 3B work
    | `rejected` | No such board, an invalid response, rejected by you, or still unreachable after 3 attempts. |
    | `registered` | A board exists, created by discovery or already registered. |
    | `discovered` / `validating` | Queued, or being checked. |
+   | `unsupported` | A careers page with no reliable extraction method (diagnostics kept as evidence). |
 
 ### What never counts as ownership
 
@@ -65,6 +70,15 @@ PROREZ_DISCOVERY_AUTO_REGISTER=false PROREZ_DISCOVERY_MAX_QUERIES_PER_RUN=4 npm 
 ```
 
 The JSON summary reports requests, credits, candidate URLs, unique/new candidates, verification outcomes and registrations. Inspect ownership evidence in **Boards → Board discovery** before manually approving any pending board.
+
+**Priority (Milestone 3D).** Each run verifies candidates in this order:
+1. careers pages of verified company domains;
+2. Workday sites;
+3. retries of temporary failures;
+4. other careers pages;
+5. everything else.
+
+Search is skipped while at least twice the per-run batch of candidates is waiting, so credits are not spent while a backlog exists. `unsupported` careers pages are re-checked after 30 days.
 
 Scheduling is durable: a single `discovery_schedule` row holds `next_run_at` and a lease, and is claimed atomically (the 3B pattern). Runs cannot overlap, which a unique index on running runs also enforces. A crashed run is recovered when its lease expires (30 minutes). Candidates being verified carry their own lease, so they are re-queued after a crash. Every run has a 20-minute limit.
 
@@ -136,7 +150,7 @@ Discovery handles untrusted URLs. The outbound policy is:
   - https only, default port, no credentials, real DNS names only. IP literals, `localhost` and internal TLDs are refused.
   - The DNS answer is checked inside the socket's own lookup, and the connection uses exactly those addresses. That blocks private, loopback, link-local, CGNAT, multicast, reserved, documentation and IPv4-mapped IPv6 ranges, and defeats DNS rebinding.
   - At most 3 redirects, each re-validated. A redirect to an ATS board is recorded, not followed.
-  - Pages are HTML only, capped at 1 MB with a 10 s timeout and identity encoding.
+  - Pages are HTML only, capped at 4 MB (raised from 1 MB in Milestone 3D: real careers pages exceeded it) with a 10 s timeout and identity encoding.
   - `robots.txt` is obeyed (RFC 9309, up to 5 redirects). An unreachable robots.txt means "do not crawl".
   - Pages are never executed: only link attributes are read, as text.
 - **Blocked or failed fetches** produce explicit failure evidence, never a false success.

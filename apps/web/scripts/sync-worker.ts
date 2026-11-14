@@ -15,6 +15,7 @@ import { workerConfigFromEnv } from "../lib/ats/schedule";
 import { consoleLogger, drainDueBoards, newWorkerId, startWorker } from "../lib/ats/worker";
 import { resolveDataSource } from "../lib/repositories/source";
 import { discoveryDepsFromEnv } from "../lib/discovery/factory";
+import { extractionLimitsFromEnv } from "../lib/careers/limits";
 
 async function main() {
   if (resolveDataSource(process.env) !== "database") {
@@ -26,7 +27,8 @@ async function main() {
   const owner = newWorkerId();
   // Validates PROREZ_DISCOVERY_* at start-up; discovery runs only when enabled or requested.
   const discovery = discoveryDepsFromEnv(prisma, process.env, consoleLogger);
-  const deps = { prisma, transport, config, owner, log: consoleLogger, discovery };
+  const limits = extractionLimitsFromEnv(process.env);
+  const deps = { prisma, transport, config, owner, log: consoleLogger, discovery, limits };
 
   if (process.argv.includes("--once")) {
     consoleLogger("worker_once", { owner });

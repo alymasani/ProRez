@@ -46,6 +46,15 @@ is due and exits. Details and settings: [docs/ats-sync.md](docs/ats-sync.md#auto
 
 The worker can also find new employer boards: from your saved jobs, Tavily Search (`TAVILY_API_KEY`, the default), optional Brave Search, or imported Common Crawl lists. It verifies each board with the provider, and registers it automatically only when the company's own website links to it; everything else waits for review on the Boards page. Enable scheduled discovery with `PROREZ_DISCOVERY_ENABLED=true`. Guide: [docs/discovery.md](docs/discovery.md).
 
+## Workday and company career sites (Milestone 3D)
+
+Besides the four ATS APIs, ProRez reads Workday career sites (`*.myworkdayjobs.com`) and ordinary company
+careers pages (structured `JobPosting` data, sitemaps, page links, and optional sandboxed browser rendering).
+On the Boards page, **Import a careers page** accepts any public careers URL, detects what it is, previews the
+jobs it can extract and registers it for automatic syncing. Discovery finds Workday sites and careers pages
+too. Jobs are never expired from a snapshot that is not provably complete. Guide:
+[docs/career-sources.md](docs/career-sources.md).
+
 ## Structure
 
 | Path | Purpose |
@@ -63,7 +72,8 @@ The worker can also find new employer boards: from your saved jobs, Tavily Searc
 | `lib/jobs/manual-submission.ts` | Manual job form validation |
 | `lib/profiles/` | Profile form rules (`draft.ts`), strict server parsing (`schema.ts`), persistence (`service.ts`) |
 | `lib/matching/` | Deterministic eligibility engine, evaluation persistence, notification planning — see [docs/matching.md](docs/matching.md) |
-| `lib/boards/` | Employer board URLs, validation, health, persistence |
+| `lib/boards/` | Employer board URLs (ATS, Workday, careers pages), validation, health, persistence |
+| `lib/careers/` | Generic career-site extraction (JSON-LD, sitemaps, static HTML, rendering), URL importer |
 | `lib/auth/mutation-guard.ts` | The single access check every write passes through |
 
 ## Conventions

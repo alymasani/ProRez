@@ -112,6 +112,7 @@ export const SOURCE_PROVIDER_LABELS: Record<SourceProvider, string> = {
   smartrecruiters: "SmartRecruiters",
   company_site: "Company career site",
   manual: "Manual submission",
+  workday: "Workday",
 };
 
 export const DISCOVERY_STATUS: Record<DiscoveryStatus, StatusMeta> = {

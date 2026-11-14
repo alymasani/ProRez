@@ -19,7 +19,7 @@ import type { PrismaClient } from "../generated/prisma/client";
 import type { AtsProvider } from "../types";
 import type { HttpTransport } from "./http";
 import { DEFAULT_WORKER_CONFIG, type WorkerConfig } from "./schedule";
-import { syncBoard, type SyncSummary } from "./sync";
+import { syncBoard, type SyncOptions, type SyncSummary } from "./sync";
 import { runDiscoveryIfDue, type DiscoveryDeps } from "../discovery/run";
 import type { AtsAdapter } from "./types";
 
@@ -101,6 +101,8 @@ export interface WorkerDeps {
    * own lane (never blocking board syncs), when its durable schedule is due.
    */
   discovery?: () => DiscoveryDeps;
+  /** Milestone 3D: Workday / generic extraction limits (lib/careers/limits.ts). */
+  limits?: SyncOptions["limits"];
 }
 
 /**
@@ -139,6 +141,7 @@ export async function runClaimedBoard(deps: WorkerDeps, board: ClaimedBoard, sig
       leaseOwner: owner,
       schedule: config,
       adapter: deps.adapterFor?.(board.provider),
+      limits: deps.limits,
     });
     if (!result.ok) {
       // Disabled or removed between claim and run: stop scheduling it.

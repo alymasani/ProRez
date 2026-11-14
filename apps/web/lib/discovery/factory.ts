@@ -5,44 +5,16 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+export { createFixtureSiteFetcher } from "./net";
 import type { PrismaClient } from "../generated/prisma/client";
 import { isTestDatabase, resolveTransport } from "../ats/http";
 import { discoveryConfigFromEnv } from "./config";
-import { checkSiteUrl, createSafeSiteFetcher, type PageResult, type SiteFetcher } from "./net";
-import { recognizeAtsUrl } from "../boards/board-url";
+import { createFixtureSiteFetcher, createSafeSiteFetcher } from "./net";
+import { rendererFromEnv } from "../careers/render";
 import type { DiscoveryDeps, DiscoveryLogger } from "./run";
 import { createBraveSearchProvider, createTavilySearchProvider, type SearchProvider } from "./search";
 
 type Env = Readonly<Record<string, string | undefined>>;
-
-/** Site pages from `<dir>/<host><path>.html` (path "/" → "index"); `<file>.redirect` holds a Location. */
-export function createFixtureSiteFetcher(dir: string): SiteFetcher {
-  let requests = 0;
-  return {
-    get requests() {
-      return requests;
-    },
-    async fetchPage(url): Promise<PageResult> {
-      const checked = checkSiteUrl(url);
-      if (!checked.ok) return { ok: false, url, failure: "blocked_url", message: checked.reason };
-      requests++;
-      const base = path.join(dir, checked.url.hostname, checked.url.pathname.replace(/\/$/, "") || "/index");
-      try {
-        const location = (await readFile(`${base}.redirect`, "utf8")).trim();
-        return recognizeAtsUrl(location)
-          ? { ok: true, url, finalUrl: url, status: 302, html: null, redirects: [location], atsRedirect: location }
-          : { ok: false, url, failure: "http_error", message: "redirect" };
-      } catch {
-        /* not a redirect */
-      }
-      try {
-        return { ok: true, url, finalUrl: url, status: 200, html: await readFile(`${base}.html`, "utf8"), redirects: [] };
-      } catch {
-        return { ok: false, url, failure: "http_error", message: "HTTP 404" };
-      }
-    },
-  };
-}
 
 /** Search results from `<dir>/<slug of query>__<page>.json` ({ "urls": [...] }); missing file = no results. */
 export function createFixtureSearchProvider(dir: string): SearchProvider {
@@ -75,6 +47,8 @@ export function discoveryDepsFromEnv(prisma: PrismaClient, env: Env, log?: Disco
   const searchFixtures = env.PROREZ_DISCOVERY_SEARCH_FIXTURES;
   if ((siteFixtures || searchFixtures) && !testDb) throw new Error("Discovery fixtures are only allowed against a *_e2e or *_test database.");
   const atsTransport = resolveTransport(env);
+  // Test and e2e databases never spend real search credits: live search needs an explicit opt-in there.
+  const liveSearchBlocked = testDb && !searchFixtures && env.PROREZ_ALLOW_LIVE_SEARCH_IN_TESTS !== "1";
   return () => ({
     prisma,
     config: searchFixtures
@@ -84,10 +58,12 @@ export function discoveryDepsFromEnv(prisma: PrismaClient, env: Env, log?: Disco
       : config,
     atsTransport,
     // A fresh fetcher per run: robots.txt is re-read and request counts start at zero.
-    siteFetcher: siteFixtures ? createFixtureSiteFetcher(siteFixtures) : createSafeSiteFetcher(),
+    siteFetcher: siteFixtures ? createFixtureSiteFetcher(siteFixtures) : createSafeSiteFetcher({ renderer: rendererFromEnv(env) }),
     search: searchFixtures
       ? createFixtureSearchProvider(searchFixtures)
-      : config.searchProvider === "tavily" && config.tavilyApiKey
+      : liveSearchBlocked
+        ? null
+        : config.searchProvider === "tavily" && config.tavilyApiKey
         ? createTavilySearchProvider(config.tavilyApiKey, { minIntervalMs: config.searchMinIntervalMs })
         : config.searchProvider === "brave" && config.braveApiKey
           ? createBraveSearchProvider(config.braveApiKey, { minIntervalMs: config.searchMinIntervalMs })

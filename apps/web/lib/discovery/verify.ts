@@ -19,11 +19,13 @@
 import { AtsError, isTransientError, type HttpTransport } from "../ats/http";
 import { ATS_ADAPTERS } from "../ats/registry";
 import type { AtsAdapter } from "../ats/types";
-import { isValidBoardToken, recognizeAtsUrl } from "../boards/board-url";
+import { isValidBoardToken, recognizeAtsUrl, workdayEndpoints } from "../boards/board-url";
 import type { Prisma, PrismaClient } from "../generated/prisma/client";
 import type { AtsProvider } from "../types";
 import { canTransition, recordEvidence, type CandidateStatus } from "./candidates";
-import { candidateDomains, findAtsLinks, siteDomain } from "./links";
+import { candidateDomains, extractLinks as findAllLinks, findAtsLinks, isThirdPartyDomain, registrableDomain } from "./links";
+import { extractCareerSite } from "../careers/extract";
+import { upsertCandidate } from "./candidates";
 import type { SiteFetcher } from "./net";
 
 export interface VerifyDeps {
@@ -59,6 +61,14 @@ function countingTransport(inner: HttpTransport) {
       requests++;
       return inner.getJson(url, options);
     },
+    ...(inner.postJson
+      ? {
+          async postJson(url: string, body: unknown, options: { signal?: AbortSignal; timeoutMs?: number }) {
+            requests++;
+            return inner.postJson!(url, body, options);
+          },
+        }
+      : {}),
   };
   return { transport, count: () => requests };
 }
@@ -67,18 +77,28 @@ function countingTransport(inner: HttpTransport) {
 export async function claimCandidates(prisma: PrismaClient, input: { limit: number; now: Date; leaseMs: number }): Promise<string[]> {
   if (input.limit <= 0) return [];
   const until = new Date(input.now.getTime() + input.leaseMs);
-  const rows = await prisma.$queryRaw<{ id: string }[]>`
+  const rows = await prisma.$queryRaw<{ id: string; priority: number; first: Date }[]>`
     UPDATE "discovery_candidates" SET "status" = 'validating', "validating_until" = ${until}, "updated_at" = ${input.now}
     WHERE "id" IN (
       SELECT "id" FROM "discovery_candidates"
       WHERE ("status" = 'discovered' AND ("next_attempt_at" IS NULL OR "next_attempt_at" <= ${input.now}))
          OR ("status" = 'validating' AND "validating_until" < ${input.now})
-      ORDER BY "first_discovered_at" ASC, "id" ASC
+      -- Priority (Milestone 3D): careers pages of verified company domains,
+      -- Workday sites, retries of temporary failures, other careers pages, the rest.
+      ORDER BY CASE
+                 WHEN "source" = 'company_domain' THEN 0
+                 WHEN "provider" = 'workday' THEN 1
+                 WHEN "attempts" > 0 THEN 2
+                 WHEN "provider" = 'company_site' THEN 3
+                 ELSE 4
+               END, "first_discovered_at" ASC, "id" ASC
       LIMIT ${input.limit}
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING "id"`;
-  return rows.map((r) => r.id);
+    RETURNING "id", (CASE WHEN "source" = 'company_domain' THEN 0 WHEN "provider" = 'workday' THEN 1 WHEN "attempts" > 0 THEN 2
+                          WHEN "provider" = 'company_site' THEN 3 ELSE 4 END)::int AS "priority", "first_discovered_at" AS "first"`;
+  // RETURNING order is unspecified: process in priority order too.
+  return rows.sort((a, b) => a.priority - b.priority || a.first.getTime() - b.first.getTime() || a.id.localeCompare(b.id)).map((r) => r.id);
 }
 
 async function setStatus(
@@ -117,7 +137,7 @@ export async function verifyCandidate(deps: VerifyDeps, candidateId: string): Pr
 
   // 1. Identifier and provider
   const adapter = deps.adapterFor?.(provider) ?? ATS_ADAPTERS[provider];
-  if (!adapter || !isValidBoardToken(c.boardToken)) {
+  if (!adapter || !isValidBoardToken(c.boardToken, provider)) {
     await setStatus(prisma, c.id, "validating", "rejected", { statusReason: "Unsupported provider or invalid board identifier.", validatingUntil: null, lastVerifiedAt: now() });
     return result("rejected", "Unsupported provider or invalid board identifier.");
   }
@@ -136,13 +156,22 @@ export async function verifyCandidate(deps: VerifyDeps, candidateId: string): Pr
     return result(linkable ? "registered" : "rejected", "Already registered.");
   }
 
+  // Generic company careers pages: extraction-based verification (Milestone 3D).
+  if (provider === "company_site") return verifyCareerPage(deps, c);
+
   // 3. Validate the board through the provider's public API
   const ats = countingTransport(deps.atsTransport);
   let postingsText: string[] = [];
   let postingCount = 0;
   let complete = false;
   try {
-    const fetched = await adapter.fetchPostings(c.boardToken, { transport: ats.transport, signal: deps.signal, region: c.region === "eu" ? "eu" : null });
+    const fetched = await adapter.fetchPostings(c.boardToken, {
+      transport: ats.transport,
+      signal: deps.signal,
+      region: c.region === "eu" ? "eu" : null,
+      // Verification needs a live board and some posting text, not the whole catalogue.
+      limits: provider === "workday" ? { maxListingPages: 3, maxDetailPages: 8, minIntervalMs: 250 } : undefined,
+    });
     postingCount = fetched.postings.length;
     complete = fetched.complete;
     postingsText = fetched.postings.slice(0, 50).map((p) => `${p.descriptionText}`);
@@ -166,7 +195,12 @@ export async function verifyCandidate(deps: VerifyDeps, candidateId: string): Pr
 
   // 4. Employer metadata and domain hints from the board's own content
   const info = provider === "greenhouse" ? await greenhouseBoardInfo(ats.transport, c.boardToken, deps.signal) : { name: null, content: "" };
-  const hints = candidateDomains([info.content, ...postingsText], MAX_DOMAINS);
+  // A careers page that linked here (routing) is the first domain to check.
+  // Workday postings rarely name a website: the tenant name gives lookup HINTS
+  // ("motorolasolutions" → motorolasolutions.com). Never proof — the site must
+  // still link to this exact board.
+  const tenantHints = provider === "workday" ? workdayTenantHints(c.boardToken) : [];
+  const hints = [...new Set([...(c.companyDomain && !isThirdPartyDomain(c.companyDomain) ? [c.companyDomain] : []), ...candidateDomains([info.content, ...postingsText], MAX_DOMAINS), ...tenantHints])].slice(0, MAX_DOMAINS + tenantHints.length);
 
   // 5. Ownership: the company's website must point at THIS board
   const siteBefore = deps.siteFetcher.requests;
@@ -181,7 +215,8 @@ export async function verifyCandidate(deps: VerifyDeps, candidateId: string): Pr
         if (page.failure === "blocked_url" || page.failure === "blocked_address" || page.failure === "robots_disallowed") break;
         continue;
       }
-      const finalDomain = siteDomain(new URL(page.finalUrl).hostname);
+      // Companies are keyed by registrable domain ("jobs.acme.com" → "acme.com").
+      const finalDomain = registrableDomain(new URL(page.finalUrl).hostname);
       if (page.html === null) {
         const target = recognizeAtsUrl(page.atsRedirect);
         if (target && sameBoard(target, c)) {
@@ -242,6 +277,12 @@ export async function verifyCandidate(deps: VerifyDeps, candidateId: string): Pr
   return result("pending_review", reason, { atsRequests: ats.count(), siteRequests });
 }
 
+function workdayTenantHints(token: string): string[] {
+  const tenant = workdayEndpoints(token)?.tenant;
+  if (!tenant || tenant.length < 3 || !/^[a-z0-9-]+$/.test(tenant)) return [];
+  return [`${tenant}.com`, `${tenant}.ca`].filter((d) => !isThirdPartyDomain(d));
+}
+
 function sameBoard(link: { provider: string; boardToken: string; region: string | null }, c: { provider: string; boardToken: string; region: string | null }) {
   return link.provider === c.provider && link.boardToken === c.boardToken && (link.region ?? null) === (c.region ?? null);
 }
@@ -270,4 +311,100 @@ async function temporaryFailure(deps: VerifyDeps, id: string, attempts: number, 
     nextAttemptAt: new Date(now.getTime() + delay),
   });
   return { status: "discovered", reason: message, temporary: true, atsRequests, siteRequests: 0, companyDomain: null };
+}
+
+// ---------------------------------------------------------------------------
+// Generic company careers pages (Milestone 3D)
+// ---------------------------------------------------------------------------
+
+/** Verification-time extraction budget (a sync reads more). */
+const VERIFY_LIMITS = { maxListingPages: 2, maxDetailPages: 10, maxRenders: 2, minIntervalMs: 1000 };
+
+/**
+ * 1. Extract the careers page (safe fetcher, robots.txt, strategies 1–4).
+ * 2. Links/redirects to supported ATS or Workday boards → those boards become
+ *    candidates (with this site's domain as their first ownership hint) and
+ *    this page is NOT scraped as a generic source (routed).
+ * 3. No reliable jobs → `unsupported`, with diagnostics kept as evidence.
+ * 4. Ownership: the page must be served from the company's own registrable
+ *    domain (not a third-party platform); a careers SUBDOMAIN additionally
+ *    needs the main site to link to it. Otherwise → pending review.
+ */
+async function verifyCareerPage(deps: VerifyDeps, c: { id: string; boardUrl: string; boardToken: string; attempts: number; companyName: string | null }): Promise<VerifyOutcome> {
+  const { prisma } = deps;
+  const now = deps.now ?? (() => new Date());
+  const before = deps.siteFetcher.requests;
+  const siteRequests = () => deps.siteFetcher.requests - before;
+  const base = { temporary: false, atsRequests: 0, companyDomain: null as string | null };
+  const x = await extractCareerSite(c.boardUrl, deps.siteFetcher, { limits: VERIFY_LIMITS, signal: deps.signal });
+  await recordEvidence(prisma, c.id, {
+    type: "career_page_extraction",
+    status: x.status === "ok" ? "validated" : "failed",
+    sourceUrl: c.boardUrl,
+    dedupeKey: "career_page_extraction|latest",
+    observedAt: now(),
+    metadata: { status: x.status, jobs: x.jobs.length, strategy: x.strategy, complete: x.complete, pagesFetched: x.pagesFetched, rendered: x.rendered, diagnostics: x.diagnostics.slice(0, 10), sampleTitles: x.jobs.slice(0, 5).map((j) => j.title) },
+  });
+
+  if (x.status === "blocked") {
+    const f = x.failure?.failure;
+    if (f === "timeout" || f === "network") {
+      const out = await temporaryFailure(deps, c.id, c.attempts, x.failure?.message ?? "Network error.", 0);
+      return { ...out, siteRequests: siteRequests() };
+    }
+    const reason = `The careers page could not be read: ${x.failure?.message ?? "blocked"}.`;
+    await setStatus(prisma, c.id, "validating", "rejected", { statusReason: reason.slice(0, 300), validatingUntil: null, lastVerifiedAt: now() });
+    return { ...base, status: "rejected", reason, siteRequests: siteRequests() };
+  }
+
+  const pageHost = new URL(x.finalUrl ?? c.boardUrl).hostname.toLowerCase();
+  const domain = registrableDomain(pageHost);
+
+  // Route to dedicated adapters.
+  if (x.routedTo.length > 0) {
+    for (const target of x.routedTo.slice(0, 5)) {
+      const { id } = await upsertCandidate(prisma, { recognized: target, discoveredUrl: c.boardUrl, source: "career_page", now: now(), companyDomainHint: isThirdPartyDomain(domain) ? null : domain });
+      await recordEvidence(prisma, id, { type: "routed_to_ats", status: "unvalidated", sourceUrl: c.boardUrl, observedAt: now(), metadata: { from: c.boardUrl } });
+    }
+    await recordEvidence(prisma, c.id, { type: "routed_to_ats", status: "validated", sourceUrl: c.boardUrl, observedAt: now(), metadata: { target: x.routedTo.map((t) => t.canonicalBoardUrl).join(", ") } });
+    {
+      const reason = `Routed to ${x.routedTo.map((t) => t.canonicalBoardUrl).join(", ")}; the dedicated adapter is used instead of scraping this page.`;
+      await setStatus(prisma, c.id, "validating", "rejected", { statusReason: reason.slice(0, 300), companyDomain: domain, validatingUntil: null, lastVerifiedAt: now() });
+      return { ...base, status: "rejected", reason, siteRequests: siteRequests() };
+    }
+  }
+
+  if (x.status !== "ok") {
+    const reason = `No reliable job extraction: ${x.diagnostics.slice(-1)[0] ?? "no jobs found"}`.slice(0, 300);
+    await setStatus(prisma, c.id, "validating", "unsupported", { statusReason: reason, companyDomain: domain, validatingUntil: null, lastVerifiedAt: now(), postingCount: 0 });
+    return { ...base, status: "unsupported", reason, siteRequests: siteRequests() };
+  }
+
+  // Ownership of a company-hosted careers page.
+  let ownership: { type: "official_site_link"; pageUrl: string; detail: string } | null = null;
+  if (isThirdPartyDomain(domain)) {
+    ownership = null;
+  } else if (pageHost === domain || pageHost === `www.${domain}`) {
+    ownership = { type: "official_site_link", pageUrl: x.finalUrl ?? c.boardUrl, detail: "Served from the company's own domain." };
+  } else {
+    const home = await deps.siteFetcher.fetchPage(`https://${domain}/`, deps.signal);
+    const linked = home.ok && home.html !== null && extractLinksSafe(home.html, home.finalUrl).some((u) => new URL(u).hostname.toLowerCase() === pageHost);
+    if (linked && home.ok) ownership = { type: "official_site_link", pageUrl: home.finalUrl, detail: `${domain} links to ${pageHost}.` };
+  }
+  const companyName = (x.companyName ?? c.companyName ?? nameFromDomain(domain)).slice(0, 120);
+  const fields = { companyName, companyDomain: domain, postingCount: x.jobs.length, extractionStrategy: x.strategy, validatingUntil: null, lastVerifiedAt: now(), attempts: 0, nextAttemptAt: null };
+  if (ownership) {
+    await recordEvidence(prisma, c.id, { type: ownership.type, status: "validated", sourceUrl: ownership.pageUrl, observedAt: now(), metadata: { domain, detail: ownership.detail } });
+    await setStatus(prisma, c.id, "validating", "verified", { ...fields, statusReason: `${x.jobs.length} job${x.jobs.length === 1 ? "" : "s"} extracted (${x.strategy}); ${ownership.detail}` });
+    return { ...base, status: "verified", reason: null, siteRequests: siteRequests(), companyDomain: domain };
+  }
+  const reason = isThirdPartyDomain(domain)
+    ? `Jobs extracted, but ${domain} is a third-party platform, so the employer is unconfirmed. Review before registering.`
+    : `Jobs extracted, but ${domain} does not link to ${pageHost}. Review before registering.`;
+  await setStatus(prisma, c.id, "validating", "pending_review", { ...fields, statusReason: reason });
+  return { ...base, status: "pending_review", reason, siteRequests: siteRequests() };
+}
+
+function extractLinksSafe(html: string, base: string): string[] {
+  return findAllLinks(html, base);
 }

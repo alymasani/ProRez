@@ -8,11 +8,13 @@ import { parseBoardInput } from "@/lib/boards/schema";
 import { createBoard, deleteBoard, setBoardEnabled } from "@/lib/boards/service";
 import { resolveTransport } from "@/lib/ats/http";
 import { syncBoard, type SyncSummary } from "@/lib/ats/sync";
+import { extractionLimitsFromEnv } from "@/lib/careers/limits";
 import { getPrisma } from "@/lib/db/client";
 import { fail, type MutationResult } from "@/lib/mutations/result";
 import type { EmployerBoard } from "@/lib/types";
 import { approveCandidate, rejectCandidate, requeueCandidate } from "@/lib/discovery/register";
 import { requestDiscoveryRun } from "@/lib/discovery/run";
+import { importCareerUrl, previewCareerUrl, type ImportPreview } from "@/lib/careers/importer";
 
 const idSchema = z.uuid();
 
@@ -69,7 +71,7 @@ export async function syncBoardAction(id: unknown): Promise<MutationResult<SyncS
   return run(async () => {
     const bid = idSchema.safeParse(id);
     if (!bid.success) return fail("validation", "Invalid request.");
-    return syncBoard(getPrisma(), bid.data, { transport: resolveTransport() });
+    return syncBoard(getPrisma(), bid.data, { transport: resolveTransport(), limits: extractionLimitsFromEnv(process.env) });
   });
 }
 
@@ -113,5 +115,36 @@ export async function revalidateCandidateAction(id: unknown): Promise<MutationRe
     const result = await requeueCandidate(getPrisma(), cid.data);
     if (result.ok) await requestDiscoveryRun(getPrisma());
     return result;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Universal career-URL import (Milestone 3D). Same local-only access rules.
+// The preview fetches the public page server-side (SSRF-safe fetcher, robots
+// honoured, no browser rendering in the web server) and changes nothing.
+// ---------------------------------------------------------------------------
+
+const urlInput = z.string().trim().min(4).max(2048);
+
+export async function previewCareerUrlAction(url: unknown): Promise<MutationResult<ImportPreview>> {
+  const access = await requireMutationAccess();
+  if (!access.ok) return fail(access.code, access.message);
+  const parsed = urlInput.safeParse(url);
+  if (!parsed.success) return fail("validation", "Enter a careers page URL.", { fieldErrors: { url: "Enter a URL." } });
+  try {
+    return await previewCareerUrl(getPrisma(), parsed.data, { transport: resolveTransport(), signal: AbortSignal.timeout(60_000) });
+  } catch (error) {
+    console.error("[boards] career URL preview failed", error);
+    return fail("unexpected", "The page could not be checked. Nothing was changed — please try again.");
+  }
+}
+
+/** Registers the source after re-checking it on the server (the client's preview is not trusted). */
+export async function importCareerUrlAction(url: unknown, employerName: unknown): Promise<MutationResult<{ boardId: string; preview: ImportPreview }>> {
+  return run(async () => {
+    const parsed = urlInput.safeParse(url);
+    const name = z.string().max(120).nullable().safeParse(typeof employerName === "string" ? employerName : null);
+    if (!parsed.success || !name.success) return fail("validation", "Invalid request.");
+    return importCareerUrl(getPrisma(), { url: parsed.data, employerName: name.data }, { transport: resolveTransport(), signal: AbortSignal.timeout(90_000) });
   });
 }

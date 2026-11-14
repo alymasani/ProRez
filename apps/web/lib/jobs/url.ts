@@ -8,6 +8,7 @@
  * limits, per-source authorization) — see that module's contract.
  */
 import type { AtsProvider } from "../types";
+import { recognizeAtsUrl } from "../boards/board-url";
 
 export const JOB_URL_MAX_LENGTH = 2048;
 
@@ -128,6 +129,7 @@ const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
  * - Lever:           jobs.lever.co/{company}/{uuid}
  * - Ashby:           jobs.ashbyhq.com/{company}/{uuid}
  * - SmartRecruiters: jobs.smartrecruiters.com/{Company}/{id}-{slug}
+ * - Workday:         {tenant}.wdN.myworkdayjobs.com/[locale/]{site}/job/{location}/{slug}_{req}
  */
 export function detectAtsPosting(canonicalUrl: string): AtsPostingRef | null {
   let url: URL;
@@ -158,6 +160,11 @@ export function detectAtsPosting(canonicalUrl: string): AtsPostingRef | null {
   if (host === "jobs.smartrecruiters.com") {
     const id = /^(\d{6,})(?:-|$)/.exec(parts[1] ?? "")?.[1];
     return ref("smartrecruiters", parts[0], id);
+  }
+  // Workday (Milestone 3D): same identity as the Workday adapter (site token + lowercase posting id).
+  const workday = recognizeAtsUrl(canonicalUrl);
+  if (workday?.provider === "workday" && workday.postingId) {
+    return { provider: "workday", boardToken: workday.boardToken, postingId: workday.postingId.toLowerCase() };
   }
   return null;
 }

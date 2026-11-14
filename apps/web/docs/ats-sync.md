@@ -186,3 +186,7 @@ Other events: `worker_started`, `sync_failed`, `sync_not_run`, `sync_crashed`, `
   ```
   PROREZ_ATS_SMOKE="greenhouse:<token>,lever:<site>" npm run test:smoke
   ```
+
+## Workday and company career sites (Milestone 3D)
+
+Workday career sites and generic company careers pages are synced by the same worker, with the same accounting, leases, retries and reconciliation. Their listing completeness is stricter: Workday totals of 2,000 or more and generic snapshots that are not provably exhaustive never mark postings missing. Description enrichment is tracked separately (`board_sync_runs.description_complete`). Details: [career-sources.md](career-sources.md).

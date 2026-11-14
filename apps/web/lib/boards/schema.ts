@@ -1,12 +1,13 @@
 /** Strict server-side parsing for employer-board mutations. */
 import { z } from "zod";
-import { ATS_PROVIDERS, type AtsProvider } from "../types";
+import { TOKEN_ATS_PROVIDERS, type AtsProvider } from "../types";
 import { canonicalBoardUrl, isValidBoardToken, normalizeBoardToken, type BoardRegion } from "./board-url";
 
 export const POLL_INTERVAL = { min: 15, max: 10_080, default: 360 } as const;
 
 const boardInputSchema = z.strictObject({
-  provider: z.enum(ATS_PROVIDERS),
+  // Token form: the four token-based providers. Workday and company pages use the URL importer.
+  provider: z.enum(TOKEN_ATS_PROVIDERS),
   employerName: z.string().transform((s) => s.trim()),
   boardToken: z.string().transform(normalizeBoardToken),
   pollIntervalMinutes: z.number().int(),
@@ -48,7 +49,7 @@ export function parseBoardInput(input: unknown): ParseBoardResult {
   const fieldErrors: Partial<Record<BoardField, string>> = {};
   if (!b.employerName) fieldErrors.employerName = "Enter the employer's name.";
   else if (b.employerName.length > 120) fieldErrors.employerName = "Keep the name under 120 characters.";
-  if (!isValidBoardToken(b.boardToken)) {
+  if (!isValidBoardToken(b.boardToken, b.provider)) {
     fieldErrors.boardToken = "Use the board identifier from the URL: letters, numbers, dots, dashes or underscores.";
   }
   if (b.pollIntervalMinutes < POLL_INTERVAL.min || b.pollIntervalMinutes > POLL_INTERVAL.max) {

@@ -22,7 +22,8 @@ export interface DiscoveryCandidateView {
   companyName: string | null;
   companyDomain: string | null;
   source: string;
-  status: "discovered" | "validating" | "verified" | "pending_review" | "rejected" | "registered";
+  status: "discovered" | "validating" | "verified" | "pending_review" | "rejected" | "registered" | "unsupported";
+  extractionStrategy: string | null;
   statusReason: string | null;
   postingCount: number | null;
   firstDiscoveredAt: string;
@@ -85,6 +86,10 @@ function evidenceSummary(type: string, metadata: unknown): string | null {
       return `Common Crawl ${String(m.crawl ?? "")} ${String(m.timestamp ?? "")}`.trim();
     case "manual_review":
       return `${String(m.decision ?? "")}${m.reason ? `: ${String(m.reason)}` : ""}`;
+    case "career_page_extraction":
+      return `${typeof m.jobs === "number" ? `${m.jobs} job${m.jobs === 1 ? "" : "s"} extracted` : "Extraction attempted"}${m.strategy ? ` via ${String(m.strategy)}` : ""}${m.complete === true ? " (listing complete)" : m.complete === false ? " (listing not provably complete)" : ""}${Array.isArray(m.diagnostics) && m.diagnostics.length ? ` — ${String(m.diagnostics[0])}` : ""}`;
+    case "routed_to_ats":
+      return `Careers page leads to ${String(m.target ?? "a supported ATS board")}`;
     default:
       return null;
   }
@@ -111,12 +116,12 @@ export async function loadDiscoveryDashboard(prisma: PrismaClient, env: Readonly
       include: { evidence: { orderBy: { observedAt: "desc" }, take: 12 } },
     }),
   ]);
-  const counts = { discovered: 0, validating: 0, verified: 0, pending_review: 0, rejected: 0, registered: 0, total: 0, autoRegistered };
+  const counts = { discovered: 0, validating: 0, verified: 0, pending_review: 0, rejected: 0, registered: 0, unsupported: 0, total: 0, autoRegistered };
   for (const g of groups) {
     counts[g.status] = g._count._all;
     counts.total += g._count._all;
   }
-  const order: Record<string, number> = { pending_review: 0, verified: 1, validating: 2, discovered: 3, registered: 4, rejected: 5 };
+  const order: Record<string, number> = { pending_review: 0, verified: 1, validating: 2, discovered: 3, registered: 4, unsupported: 5, rejected: 6 };
   return {
     counts,
     runs: runs.map((r) => ({
@@ -145,6 +150,7 @@ export async function loadDiscoveryDashboard(prisma: PrismaClient, env: Readonly
         companyDomain: c.companyDomain,
         source: c.source,
         status: c.status,
+        extractionStrategy: c.extractionStrategy,
         statusReason: c.statusReason,
         postingCount: c.postingCount,
         firstDiscoveredAt: iso(c.firstDiscoveredAt),

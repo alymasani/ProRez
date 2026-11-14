@@ -47,6 +47,20 @@ export function siteDomain(host: string): string {
   return host.toLowerCase().replace(/^www\./, "");
 }
 
+/** Two-level public suffixes common for employers; not a full Public Suffix List. */
+const TWO_LEVEL = new Set([
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp", "co.in", "com.br", "com.mx", "com.cn",
+  "com.sg", "com.hk", "co.za", "com.tr", "co.kr", "gc.ca", "on.ca", "qc.ca", "bc.ca", "ab.ca", "com.ar", "com.co", "co.il",
+]);
+
+/** "careers.eu.acme.co.uk" → "acme.co.uk": the registrable site a host belongs to (approximate). */
+export function registrableDomain(host: string): string {
+  const labels = siteDomain(host).split(".");
+  if (labels.length <= 2) return labels.join(".");
+  const lastTwo = labels.slice(-2).join(".");
+  return TWO_LEVEL.has(lastTwo) ? labels.slice(-3).join(".") : lastTwo;
+}
+
 /** Third-party domains that are never a company's own site. */
 const NOT_COMPANY = [
   "greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com", "linkedin.com", "twitter.com", "x.com", "facebook.com",
@@ -56,6 +70,10 @@ const NOT_COMPANY = [
   "builtin.com", "wellfound.com", "angel.co", "crunchbase.com", "calendly.com", "zoom.us", "typeform.com", "hubspot.com",
   "mailchimp.com", "cloudflare.com", "amazonaws.com", "cloudfront.net", "googleapis.com", "gstatic.com", "w3.org", "schema.org",
   "adobe.com", "bamboohr.com", "jobvite.com", "breezy.hr", "recruitee.com", "workable.com", "teamtailor.com", "ycombinator.com",
+  "myworkdaysite.com", "successfactors.com", "successfactors.eu", "taleo.net", "oraclecloud.com", "ultipro.com", "ukg.com",
+  "paylocity.com", "adp.com", "dayforcehcm.com", "jazzhr.com", "applytojob.com", "pinpointhq.com", "rippling.com",
+  "personio.de", "personio.com", "eightfold.ai", "phenompeople.com", "avature.net", "talentlyft.com", "jobs.ca", "workopolis.com",
+  "monster.com", "monster.ca", "ziprecruiter.com", "simplyhired.com", "careerbuilder.com", "jobillico.com", "talent.com",
 ];
 
 export function isThirdPartyDomain(domain: string): boolean {

@@ -106,6 +106,7 @@ export const SOURCE_PROVIDERS = [
   "smartrecruiters",
   "company_site",
   "manual",
+  "workday",
 ] as const;
 export type SourceProvider = (typeof SOURCE_PROVIDERS)[number];
 
@@ -590,8 +591,16 @@ export interface JobProfileMatch {
 // Employer boards (ATS registry; polling arrives in a later milestone)
 // ---------------------------------------------------------------------------
 
-export const ATS_PROVIDERS = ["greenhouse", "lever", "ashby", "smartrecruiters"] as const;
+/** Providers addressed by a plain board token (Milestone 3A). */
+export const TOKEN_ATS_PROVIDERS = ["greenhouse", "lever", "ashby", "smartrecruiters"] as const;
+/**
+ * Every kind of career source a board row can be (Milestone 3D): the four
+ * token-based ATS APIs, Workday career sites and generic company career pages.
+ * (The name is kept for compatibility; "board" means any career source.)
+ */
+export const ATS_PROVIDERS = [...TOKEN_ATS_PROVIDERS, "workday", "company_site"] as const;
 export type AtsProvider = (typeof ATS_PROVIDERS)[number];
+export type ExtractionStrategy = "ats_api" | "workday_cxs" | "json_ld" | "sitemap" | "static_html" | "rendered";
 
 /** What a provider's publication timestamp means (only first_published supports latency). */
 export type PublishedAtKind = "none" | "first_published" | "last_published" | "updated";
@@ -673,6 +682,12 @@ export interface EmployerBoard {
   origin: "manual" | "discovered";
   /** Verified company website domain, when the board belongs to a known company. */
   companyDomain: string | null;
+  /** How jobs are extracted (Milestone 3D); null for boards synced before 3D (ATS API). */
+  extractionStrategy: ExtractionStrategy | null;
+  /** Locale from the source URL (Workday), informational. */
+  locale: string | null;
+  /** Last sync whose listing snapshot was provably complete. */
+  lastCompleteSnapshotAt: IsoDateTime | null;
   lastErrorCode: string | null;
   lastCheckedAt: IsoDateTime | null;
   lastSuccessAt: IsoDateTime | null;

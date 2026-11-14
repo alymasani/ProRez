@@ -38,6 +38,31 @@ const MAX_SEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const sitePattern = /(?:^|\s)site:([a-z0-9.-]+)/gi;
 
+/** Job aggregators excluded from unrestricted (careers-page) searches: never a company's own site. */
+const AGGREGATORS = ["linkedin.com", "indeed.com", "glassdoor.com", "glassdoor.ca", "ziprecruiter.com", "monster.com", "monster.ca", "simplyhired.com", "talent.com", "workopolis.com", "jobbank.gc.ca", "builtin.com", "wellfound.com"];
+
+/**
+ * Tavily request body. Domain-restricted queries ("site:host") send
+ * include_domains; unrestricted careers-page queries must NOT send an empty
+ * restriction (Tavily answers HTTP 400 — observed live) and exclude job
+ * aggregators instead.
+ */
+export function tavilyRequestBody(query: string): Record<string, unknown> {
+  const domains = domainsFromQuery(query);
+  return {
+    query,
+    search_depth: "basic",
+    topic: "general",
+    max_results: 20,
+    include_answer: false,
+    include_raw_content: false,
+    include_images: false,
+    include_usage: true,
+    ...(domains.length > 0 ? { include_domains: domains, include_domains_mode: "restrict" } : { exclude_domains: AGGREGATORS }),
+    safe_search: true,
+  };
+}
+
 /** Extracts query domains for Tavily's server-side domain restriction. */
 export function domainsFromQuery(query: string): string[] {
   return [...query.matchAll(sitePattern)].map((match) => match[1].toLowerCase()).filter((host, i, all) => all.indexOf(host) === i).slice(0, 20);
@@ -92,19 +117,7 @@ export function createTavilySearchProvider(
           redirect: "error",
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            query,
-            search_depth: "basic",
-            topic: "general",
-            max_results: 20,
-            include_answer: false,
-            include_raw_content: false,
-            include_images: false,
-            include_usage: true,
-            include_domains: domainsFromQuery(query),
-            include_domains_mode: "restrict",
-            safe_search: true,
-          }),
+          body: JSON.stringify(tavilyRequestBody(query)),
         });
       } catch {
         if (signal?.aborted) throw new AtsError("cancelled", "Discovery was cancelled.");

@@ -197,8 +197,20 @@ export async function runDiscovery(
       s.newCandidates += res.newCandidates;
     }
 
-    // --- 2. Collect: search API, within budgets
-    if (activeSources.includes("search") && deps.search) {
+    // --- 1b. Collect: careers pages on verified company domains (no search credits)
+    await collectCompanyDomains(prisma, s, now());
+    // Unsupported sites are re-checked occasionally (sites change), a few per run.
+    await prisma.discoveryCandidate.updateMany({
+      where: { status: "unsupported", lastVerifiedAt: { lt: new Date(now().getTime() - 30 * 86_400_000) } },
+      data: { status: "discovered", attempts: 0, nextAttemptAt: now(), statusReason: "Re-checking an unsupported site." },
+    });
+
+    // --- 2. Collect: search API, within budgets — skipped while a backlog of
+    // unverified candidates is waiting (spend verification time, not credits).
+    const backlog = await prisma.discoveryCandidate.count({ where: { status: "discovered", OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now() } }] } });
+    if (activeSources.includes("search") && deps.search && backlog >= config.maxCandidatesPerRun * 2) {
+      note(`Search skipped: ${backlog} candidates are already waiting for verification.`);
+    } else if (activeSources.includes("search") && deps.search) {
       await collectFromSearch(deps, s, note, now, signal);
     }
 
@@ -231,7 +243,7 @@ export async function runDiscovery(
         } else if (outcome.status === "pending_review") {
           s.validated++;
           s.pendingReview++;
-        } else if (outcome.status === "rejected") {
+        } else if (outcome.status === "rejected" || outcome.status === "unsupported") {
           s.rejected++;
         }
       }
@@ -328,6 +340,7 @@ async function collectFromSearch(
         source: "search",
         now: now(),
         keepObservedUrl: false,
+        allowGeneric: q.provider === "company_site",
         evidence: () => ({ type: "search_result", status: "unvalidated", dedupeKey: `search_result|${q.id}`, metadata: { queryId: q.id, query: q.text } }),
       });
       s.candidateUrls += res.recognized;
@@ -356,6 +369,33 @@ async function collectFromSearch(
       s.searchCredits = search.credits - startCredits;
     }
   }
+}
+
+/**
+ * Verified company domains whose own careers page has not been examined yet:
+ * queue `https://{domain}/careers` (bounded). Verification routes it to any
+ * ATS/Workday board it links to, or extracts it generically.
+ */
+async function collectCompanyDomains(prisma: PrismaClient, s: DiscoveryRunSummary, now: Date) {
+  const companies = await prisma.$queryRaw<{ domain: string }[]>`
+    SELECT c."domain" FROM "companies" c
+    WHERE c."domain" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "discovery_candidates" d
+        WHERE d."provider" = 'company_site' AND (d."board_token" = c."domain" || '/careers' OR d."board_token" = 'www.' || c."domain" || '/careers'))
+    ORDER BY c."created_at" ASC
+    LIMIT 10`;
+  if (companies.length === 0) return;
+  const res = await ingestUrls(prisma, companies.map((c) => `https://${c.domain}/careers`), {
+    source: "company_domain",
+    now,
+    keepObservedUrl: true,
+    allowGeneric: true,
+    evidence: (_r, url) => ({ type: "career_page_extraction", status: "unvalidated", sourceUrl: url, dedupeKey: "company_domain|queued", metadata: { queued: true } }),
+  });
+  s.candidateUrls += res.recognized;
+  s.uniqueCandidates += res.unique;
+  s.newCandidates += res.newCandidates;
 }
 
 /** Claims the schedule and runs discovery if due; always releases the lease. */

@@ -19,6 +19,7 @@ function discovery(...args: string[]) {
       PROREZ_ATS_TRANSPORT: "fixtures",
       PROREZ_DISCOVERY_SITE_FIXTURES: path.join(appRoot, "e2e", "fixtures", "discovery", "sites"),
       BRAVE_SEARCH_API_KEY: "",
+      TAVILY_API_KEY: "",
     },
     encoding: "utf8",
   });

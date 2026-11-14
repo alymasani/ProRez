@@ -19,13 +19,17 @@
  *   extracted (lib/discovery/links.ts).
  */
 import dns from "node:dns";
+import { readFile } from "node:fs/promises";
 import https from "node:https";
 import net from "node:net";
+import path from "node:path";
 import { recognizeAtsUrl } from "../boards/board-url";
 
 export const SITE_USER_AGENT = "ProRezBot/0.3 (personal job search; verifies employer career links)";
-export const MAX_PAGE_BYTES = 1024 * 1024;
+/** Modern careers pages are often 1–3 MB of HTML (observed live); still bounded. */
+export const MAX_PAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_ROBOTS_BYTES = 256 * 1024;
+export const MAX_XML_BYTES = 5 * 1024 * 1024;
 export const PAGE_TIMEOUT_MS = 10_000;
 export const MAX_REDIRECTS = 3;
 
@@ -46,10 +50,27 @@ export type PageResult =
   | { ok: true; url: string; finalUrl: string; status: number; html: null; redirects: string[]; atsRedirect: string }
   | { ok: false; url: string; failure: SiteFailure; message: string };
 
+export interface FetchPageOptions {
+  /** "html" (default) accepts HTML only; "xml" accepts XML/text (sitemaps, feeds). */
+  accept?: "html" | "xml";
+}
+
+/**
+ * Renders a page in an isolated headless browser (Milestone 3D, optional).
+ * Every browser request is re-checked by the same URL/address/robots policy.
+ */
+export interface PageRenderer {
+  render(url: string, signal?: AbortSignal): Promise<PageResult>;
+}
+
 export interface SiteFetcher {
-  fetchPage(url: string, signal?: AbortSignal): Promise<PageResult>;
+  fetchPage(url: string, signal?: AbortSignal, options?: FetchPageOptions): Promise<PageResult>;
   /** Requests actually sent (including robots.txt and redirect hops). */
   readonly requests: number;
+  /** Present only when browser rendering is enabled (PROREZ_RENDER_ENABLED). */
+  render?(url: string, signal?: AbortSignal): Promise<PageResult>;
+  /** Robots/URL/address policy check for one URL without fetching the page (used by the renderer). */
+  allowed?(url: string, signal?: AbortSignal): Promise<{ ok: true } | { ok: false; failure: SiteFailure; message: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +198,7 @@ export function createVettedLookup(resolver: Resolver): net.LookupFunction {
   }) as unknown as net.LookupFunction;
 }
 
-function requestOnce(url: URL, resolver: Resolver, maxBytes: number, signal: AbortSignal): Promise<RawResponse> {
+function requestOnce(url: URL, resolver: Resolver, maxBytes: number, signal: AbortSignal, accept = "text/html,application/xhtml+xml,text/plain;q=0.8"): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const lookup = createVettedLookup(resolver);
     const req = https.request(
@@ -186,7 +207,7 @@ function requestOnce(url: URL, resolver: Resolver, maxBytes: number, signal: Abo
         method: "GET",
         lookup,
         signal,
-        headers: { "user-agent": SITE_USER_AGENT, accept: "text/html,application/xhtml+xml,text/plain;q=0.8", "accept-encoding": "identity" },
+        headers: { "user-agent": SITE_USER_AGENT, accept, "accept-encoding": "identity" },
         maxHeaderSize: 32 * 1024,
       },
       (res) => {
@@ -230,11 +251,25 @@ function failure(url: string, error: unknown, timedOut: boolean): PageResult {
 }
 
 /** SSRF-safe fetcher for company websites. `resolver` is injectable for tests. */
-export function createSafeSiteFetcher(options: { resolver?: Resolver; timeoutMs?: number } = {}): SiteFetcher {
+export function createSafeSiteFetcher(options: { resolver?: Resolver; timeoutMs?: number; renderer?: ((fetcher: SiteFetcher) => PageRenderer) | null; minIntervalMs?: number } = {}): SiteFetcher {
   const resolver = options.resolver ?? systemResolver;
   const timeoutMs = options.timeoutMs ?? PAGE_TIMEOUT_MS;
   const robotsCache = new Map<string, string | null>();
   let requests = 0;
+  // Per-host politeness: at most one request every minIntervalMs to the same host.
+  const minInterval = options.minIntervalMs ?? 0;
+  const lastByHost = new Map<string, number>();
+  async function pace(host: string, signal: AbortSignal) {
+    if (minInterval <= 0) return;
+    const wait = (lastByHost.get(host) ?? 0) + minInterval - Date.now();
+    if (wait > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, wait);
+        signal.addEventListener("abort", () => (clearTimeout(t), reject(Object.assign(new Error("aborted"), { code: "ABORT_ERR" }))), { once: true });
+      });
+    }
+    lastByHost.set(host, Date.now());
+  }
 
   /**
    * robots.txt per RFC 9309: up to 5 redirects followed (each re-validated by
@@ -267,11 +302,28 @@ export function createSafeSiteFetcher(options: { resolver?: Resolver; timeoutMs?
     return value;
   }
 
-  return {
+  const fetcher: SiteFetcher = {
     get requests() {
       return requests;
     },
-    async fetchPage(input, outerSignal) {
+    async allowed(input, outerSignal) {
+      const checked = checkSiteUrl(input);
+      if (!checked.ok) return { ok: false, failure: "blocked_url", message: `${input}: ${checked.reason}` };
+      try {
+        const robots = await robotsFor(checked.url.origin, outerSignal ?? AbortSignal.timeout(timeoutMs));
+        if (robots === null) return { ok: false, failure: "robots_disallowed", message: `robots.txt for ${checked.url.host} was unreachable.` };
+        if (!robotsAllows(robots, checked.url.pathname + checked.url.search)) return { ok: false, failure: "robots_disallowed", message: `robots.txt disallows ${checked.url.pathname}.` };
+        // Resolve now so the renderer never connects to a private address.
+        const addresses = await resolver(checked.url.hostname);
+        if (addresses.length === 0 || addresses.some((a) => !isPublicAddress(a.address))) return { ok: false, failure: "blocked_address", message: `${checked.url.hostname} resolves to a non-public address.` };
+        return { ok: true };
+      } catch (error) {
+        const code = (error as { code?: string })?.code;
+        return { ok: false, failure: code === "PROREZ_BLOCKED_ADDRESS" ? "blocked_address" : "network", message: error instanceof Error ? error.message : "error" };
+      }
+    },
+    async fetchPage(input, outerSignal, fetchOptions = {}) {
+      const xml = fetchOptions.accept === "xml";
       const timeout = AbortSignal.timeout(timeoutMs);
       const signal = outerSignal ? AbortSignal.any([outerSignal, timeout]) : timeout;
       const redirects: string[] = [];
@@ -285,8 +337,12 @@ export function createSafeSiteFetcher(options: { resolver?: Resolver; timeoutMs?
           if (!robotsAllows(robots, checked.url.pathname + checked.url.search)) {
             return { ok: false, url: input, failure: "robots_disallowed", message: `robots.txt disallows ${checked.url.pathname}.` };
           }
+          await pace(checked.url.hostname, signal);
           requests++;
-          const res = await requestOnce(checked.url, resolver, MAX_PAGE_BYTES, signal);
+          const res = await requestOnce(
+            checked.url, resolver, xml ? MAX_XML_BYTES : MAX_PAGE_BYTES, signal,
+            xml ? "application/xml,text/xml,application/rss+xml,text/plain;q=0.8" : undefined,
+          );
           if (res.status >= 300 && res.status < 400 && res.location) {
             const next = new URL(res.location, checked.url).toString();
             redirects.push(next);
@@ -297,7 +353,8 @@ export function createSafeSiteFetcher(options: { resolver?: Resolver; timeoutMs?
             continue;
           }
           if (res.status < 200 || res.status >= 300) return { ok: false, url: input, failure: "http_error", message: `HTTP ${res.status} from ${checked.url.host}.` };
-          if (!/^(text\/html|application\/xhtml\+xml)/.test(res.contentType)) {
+          const okType = xml ? /^(application|text)\/([a-z.+-]*xml|plain)/.test(res.contentType) : /^(text\/html|application\/xhtml\+xml)/.test(res.contentType);
+          if (!okType) {
             return { ok: false, url: input, failure: "not_html", message: `Not an HTML page (${res.contentType || "no content type"}).` };
           }
           return { ok: true, url: input, finalUrl: checked.url.toString(), status: res.status, html: res.body, redirects };
@@ -308,4 +365,55 @@ export function createSafeSiteFetcher(options: { resolver?: Resolver; timeoutMs?
       }
     },
   };
+  const renderer = options.renderer?.(fetcher);
+  if (renderer) fetcher.render = (url, signal) => renderer.render(url, signal);
+  return fetcher;
+}
+
+/**
+ * Recorded company-site responses for automated tests (no network):
+ * `<dir>/<host><path>.html` (path "/" → "index"), `.xml` for XML requests,
+ * `.rendered.html` for what a browser render would produce, and `.redirect`
+ * holding a Location. Query strings select `<path>__<query>.html`.
+ */
+export function createFixtureSiteFetcher(dir: string): SiteFetcher {
+  let requests = 0;
+  const base = (u: URL) => {
+    const q = [...u.searchParams.entries()].map(([k, v]) => `${k}=${v}`).join("&").replace(/[^A-Za-z0-9=&._-]/g, "_");
+    // Test-only fixtures (allowed only against *_test/*_e2e databases); not traced into the server bundle.
+    return path.join(/*turbopackIgnore: true*/ dir, u.hostname, (u.pathname.replace(/\/$/, "") || "/index") + (q ? `__${q}` : ""));
+  };
+  const read = async (file: string) => readFile(file, "utf8").catch(() => null);
+  const fetcher: SiteFetcher = {
+    get requests() {
+      return requests;
+    },
+    async allowed(url) {
+      const checked = checkSiteUrl(url);
+      return checked.ok ? { ok: true } : { ok: false, failure: "blocked_url", message: checked.reason };
+    },
+    async fetchPage(url, _signal, options = {}): Promise<PageResult> {
+      const checked = checkSiteUrl(url);
+      if (!checked.ok) return { ok: false, url, failure: "blocked_url", message: checked.reason };
+      requests++;
+      const b = base(checked.url);
+      const location = (await read(`${b}.redirect`))?.trim();
+      if (location) {
+        if (recognizeAtsUrl(location)) return { ok: true, url, finalUrl: url, status: 302, html: null, redirects: [location], atsRedirect: location };
+        return fetcher.fetchPage(new URL(location, url).toString(), _signal, options);
+      }
+      const body = await read(options.accept === "xml" ? `${b}.xml` : `${b}.html`);
+      if (body === null) return { ok: false, url, failure: "http_error", message: "HTTP 404" };
+      return { ok: true, url, finalUrl: url, status: 200, html: body, redirects: [] };
+    },
+    async render(url): Promise<PageResult> {
+      const checked = checkSiteUrl(url);
+      if (!checked.ok) return { ok: false, url, failure: "blocked_url", message: checked.reason };
+      requests++;
+      const body = await read(`${base(checked.url)}.rendered.html`);
+      if (body === null) return { ok: false, url, failure: "http_error", message: "Nothing rendered." };
+      return { ok: true, url, finalUrl: url, status: 200, html: body, redirects: [] };
+    },
+  };
+  return fetcher;
 }

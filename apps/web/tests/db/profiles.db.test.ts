@@ -295,7 +295,7 @@ describe("employer board registry", () => {
   it("enforces board constraints in the database itself", async () => {
     const base = { employerName: "X", boardUrl: "https://jobs.lever.co/x", boardToken: "x" };
     await expect(db.employerBoard.create({ data: { ...base, provider: "manual" } })).rejects.toThrow(
-      /employer_boards_ats_provider/,
+      /employer_boards_source_provider/,
     );
     await expect(db.employerBoard.create({ data: { ...base, provider: "lever", boardToken: "UPPER" } })).rejects.toThrow(
       /employer_boards_token_format/,

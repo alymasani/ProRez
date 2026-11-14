@@ -15,12 +15,20 @@ export interface QuerySeed {
   text: string;
 }
 
-/** Public board hosts searched per provider. */
+/**
+ * Public board hosts searched per provider. Workday career sites live on
+ * per-tenant subdomains, so the registrable domain is searched (Tavily's
+ * domain restriction includes subdomains; results are still re-checked by
+ * the label-exact recogniser). Generic company sites have no host: their
+ * queries are unrestricted and only careers-page URLs are kept.
+ */
 const SITES: Record<AtsProvider, string[]> = {
   greenhouse: ["job-boards.greenhouse.io", "boards.greenhouse.io"],
   lever: ["jobs.lever.co"],
   ashby: ["jobs.ashbyhq.com"],
   smartrecruiters: ["jobs.smartrecruiters.com"],
+  workday: ["myworkdayjobs.com"],
+  company_site: [],
 };
 
 const CATEGORIES: Record<string, string[]> = {
@@ -48,6 +56,13 @@ export function generateQueries(): QuerySeed[] {
       for (const employment of ["intern", "co-op"]) out.push({ provider, category: `engineering:${employment}`, text: `site:${site} "engineering" "${employment}"` });
     }
   }
+  // Generic company career pages: no site restriction; careers-page URLs only are kept.
+  for (const [category, terms] of Object.entries(CATEGORIES)) {
+    for (const employment of ["intern", "co-op", "new grad"]) {
+      out.push({ provider: "company_site", category: `${category}:${employment}`, text: `"${terms[0]}" "${employment}" careers Canada` });
+    }
+  }
+  for (const place of PLACES) out.push({ provider: "company_site", category: "engineering:place", text: `company careers "engineering intern" ${place}` });
   return out;
 }
 

@@ -116,6 +116,7 @@ enum SourceProvider {
   smartrecruiters
   company_site
   manual
+  workday
 
   @@map("source_provider")
 }
@@ -887,6 +888,14 @@ model EmployerBoard {
   origin              BoardOrigin    @default(manual)
   /// Employer this board belongs to, when established (discovery sets it from verified evidence).
   companyId           String?        @map("company_id") @db.Uuid
+  /// Locale seen in the source URL (Workday "en-US"); informational, not identity.
+  locale              String?
+  /// How jobs are extracted: ats_api, workday_cxs, json_ld, sitemap, static_html, rendered.
+  extractionStrategy  String?        @map("extraction_strategy")
+  /// Provider-specific settings (Workday host/tenant/site; generic extraction profile).
+  sourceConfig        Json?          @map("source_config")
+  /// Last sync whose listing snapshot was provably complete.
+  lastCompleteSnapshotAt DateTime?   @map("last_complete_snapshot_at") @db.Timestamptz(3)
   isDemo              Boolean        @default(false) @map("is_demo")
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -901,6 +910,7 @@ model EmployerBoard {
   @@index([enabled, lastCheckedAt])
   @@index([nextSyncAt])
   @@index([companyId])
+  @@index([provider])
   @@map("employer_boards")
 }
 
@@ -1004,6 +1014,12 @@ model BoardSyncRun {
   ingestErrors           Int @default(0) @map("ingest_errors")
   /// Secondary diagnostic: eligible postings whose description is missing or incomplete.
   enrichmentIncomplete   Int @default(0) @map("enrichment_incomplete")
+  /// Extraction strategy used by this run (generic/Workday sources).
+  extractionStrategy     String?  @map("extraction_strategy")
+  /// Pages/requests used to enumerate the source (generic sources).
+  pagesFetched           Int      @default(0) @map("pages_fetched")
+  /// Every eligible posting has a full description (tracked separately from listing completeness).
+  descriptionComplete    Boolean? @map("description_complete")
   errorCount   Int           @default(0) @map("error_count")
   errorCode    String?       @map("error_code")
   errorMessage String?       @map("error_message")
@@ -1050,6 +1066,8 @@ enum DiscoveryCandidateStatus {
   pending_review
   rejected
   registered
+  /// Live site, but no reliable extraction method found (Milestone 3D).
+  unsupported
 
   @@map("discovery_candidate_status")
 }
@@ -1059,6 +1077,10 @@ enum DiscoverySource {
   common_crawl
   existing_jobs
   manual
+  /// Linked from a company careers page (Milestone 3D routing).
+  career_page
+  /// Careers page probed on a previously verified company domain.
+  company_domain
 
   @@map("discovery_source")
 }
@@ -1080,6 +1102,10 @@ enum DiscoveryEvidenceType {
   existing_board
   /// A person approved or rejected the candidate.
   manual_review
+  /// Generic career-page extraction attempt (jobs found, strategy, diagnostics).
+  career_page_extraction
+  /// The careers page links/redirects to a supported ATS; routed to that adapter.
+  routed_to_ats
 
   @@map("discovery_evidence_type")
 }
@@ -1120,6 +1146,9 @@ model DiscoveryCandidate {
   firstDiscoveredAt DateTime                 @map("first_discovered_at") @db.Timestamptz(3)
   lastDiscoveredAt  DateTime                 @map("last_discovered_at") @db.Timestamptz(3)
   registeredBoardId String?                  @unique @map("registered_board_id") @db.Uuid
+  locale             String?
+  extractionStrategy String?                 @map("extraction_strategy")
+  sourceConfig       Json?                   @map("source_config")
   createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
 

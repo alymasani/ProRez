@@ -24,6 +24,7 @@ const CANDIDATE_STATUS: Record<DiscoveryCandidateView["status"], StatusMeta> = {
   validating: { label: "Verifying", tone: "progress" },
   verified: { label: "Verified", tone: "success" },
   pending_review: { label: "Needs review", tone: "warning" },
+  unsupported: { label: "Unsupported", tone: "muted" },
   rejected: { label: "Rejected", tone: "muted" },
   registered: { label: "Registered", tone: "info" },
 };

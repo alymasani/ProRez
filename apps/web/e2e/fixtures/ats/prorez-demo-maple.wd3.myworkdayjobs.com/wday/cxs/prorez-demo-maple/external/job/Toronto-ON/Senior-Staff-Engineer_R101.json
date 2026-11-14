@@ -1,0 +1,12 @@
+{
+  "jobPostingInfo": {
+    "id": "fixture-2",
+    "title": "Senior Staff Engineer",
+    "jobDescription": "<p>FICTIONAL FIXTURE. Lead platform architecture. Responsibilities: mentoring. Qualifications: 10+ years. Apply now.</p>",
+    "location": "Toronto, ON",
+    "timeType": "Full time",
+    "jobReqId": "R101",
+    "startDate": "2026-11-01"
+  },
+  "hiringOrganization": { "name": "Maple Demo Systems", "url": "" }
+}

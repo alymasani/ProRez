@@ -84,6 +84,9 @@ export async function registerCandidate(prisma: PrismaClient, input: RegisterInp
           pollIntervalMinutes: POLL_INTERVAL.default,
           origin: "discovered",
           companyId: company?.id ?? null,
+          locale: c.locale,
+          extractionStrategy: c.extractionStrategy ?? (c.provider === "workday" ? "workday_cxs" : c.provider === "company_site" ? null : "ats_api"),
+          sourceConfig: c.sourceConfig ?? undefined,
           nextSyncAt: initialNextSyncAt(true, false, now),
         },
         select: { id: true },
@@ -150,7 +153,13 @@ export async function approveCandidate(
   if (c.status === "registered" && c.registeredBoardId) return { ok: true, value: { boardId: c.registeredBoardId, created: false } };
   if (c.status !== "pending_review" && c.status !== "verified") return fail("invalid_transition", `A ${c.status.replace("_", " ")} candidate cannot be approved.`);
   try {
-    await ATS_ADAPTERS[c.provider as AtsProvider].fetchPostings(c.boardToken, { transport: input.transport, region: c.region === "eu" ? "eu" : null });
+    const check = await ATS_ADAPTERS[c.provider as AtsProvider].fetchPostings(c.boardToken, {
+      transport: input.transport,
+      region: c.region === "eu" ? "eu" : null,
+      limits: { maxListingPages: 2, maxDetailPages: 5 },
+    });
+    // A generic page must still yield jobs; approval never registers an empty scrape.
+    if (c.provider === "company_site" && check.postings.length === 0) return fail("validation", "No jobs could be extracted from this careers page now, so it cannot be registered.");
   } catch (error) {
     const message = error instanceof AtsError && error.code === "not_found" ? "The provider no longer has a public board with this identifier." : `Could not confirm the board with the provider: ${error instanceof Error ? error.message : "error"}`;
     return fail("validation", message);

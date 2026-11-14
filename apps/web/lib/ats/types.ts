@@ -1,4 +1,5 @@
-import type { AtsProvider, WorkArrangement } from "../types";
+import type { AtsProvider, ExtractionStrategy, WorkArrangement } from "../types";
+import type { SiteFetcher } from "../discovery/net";
 import type { StructuredLocation } from "./canada";
 import type { HttpTransport } from "./http";
 
@@ -49,6 +50,24 @@ export interface FetchOptions {
    * capped run resumes where the previous one stopped.
    */
   enrichedPostingIds?: ReadonlySet<string>;
+  /**
+   * SSRF-safe company-site fetcher (generic career sources). Adapters that
+   * need it fall back to `transport.site()`.
+   */
+  site?: SiteFetcher;
+  /** Limits for generic/Workday extraction (defaults in each adapter). */
+  limits?: Partial<ExtractionLimits>;
+}
+
+export interface ExtractionLimits {
+  /** Listing pages (Workday CXS pages of 20; generic listing/pagination pages). */
+  maxListingPages: number;
+  /** Job-detail requests per sync. */
+  maxDetailPages: number;
+  /** Browser renders per sync (generic, when rendering is enabled). */
+  maxRenders: number;
+  /** Pause between requests to the same host, ms. */
+  minIntervalMs: number;
 }
 
 export interface FetchResult {
@@ -69,6 +88,12 @@ export interface FetchResult {
   invalidItems?: number;
   /** Postings whose description was deliberately not loaded this run (request cap). */
   enrichmentDeferred?: number;
+  /** How the postings were obtained (Milestone 3D). */
+  strategy?: ExtractionStrategy;
+  /** Employer name stated by the source itself (JSON-LD hiringOrganization), if any. */
+  sourceCompanyName?: string | null;
+  /** Non-fatal extraction diagnostics (bounded); not errors. */
+  diagnostics?: string[];
 }
 
 /** Builds the completeness fields: any reason makes the snapshot incomplete. */

@@ -18,7 +18,8 @@ import type { StatusMeta } from "@/lib/labels";
 import { POLL_INTERVAL } from "@/lib/boards/schema";
 import { formatDateTime } from "@/lib/format";
 import { SOURCE_PROVIDER_LABELS } from "@/lib/labels";
-import { ATS_PROVIDERS, type AtsProvider, type BoardSyncRun, type EmployerBoard } from "@/lib/types";
+import { TOKEN_ATS_PROVIDERS, type AtsProvider, type BoardSyncRun, type EmployerBoard } from "@/lib/types";
+import { CareerUrlImporter, strategyLabel } from "@/components/boards/career-url-importer";
 
 const POLL_OPTIONS = [60, 180, 360, 720, 1440];
 
@@ -88,7 +89,11 @@ export function BoardsManager({
   function fillFromUrl() {
     const parsed = parseBoardUrl(form.url);
     if (!parsed) {
-      setUrlHint("That doesn't look like a Greenhouse, Lever, Ashby or SmartRecruiters board URL.");
+      setUrlHint("That doesn't look like a Greenhouse, Lever, Ashby or SmartRecruiters board URL. For other careers pages, use Import a careers page.");
+      return;
+    }
+    if (!(TOKEN_ATS_PROVIDERS as readonly string[]).includes(parsed.provider)) {
+      setUrlHint(`That is a ${SOURCE_PROVIDER_LABELS[parsed.provider]} URL: use Import a careers page above.`);
       return;
     }
     setUrlHint(`Detected ${SOURCE_PROVIDER_LABELS[parsed.provider]}${parsed.region ? " (EU region)" : ""} board “${parsed.boardToken}”.`);
@@ -194,6 +199,14 @@ export function BoardsManager({
                           </div>
                           {board.companyDomain ? <div className="text-xs text-muted-foreground">Verified site: {board.companyDomain}</div> : null}
                           <div className="text-xs text-muted-foreground">{SOURCE_PROVIDER_LABELS[board.provider]}</div>
+                          {board.extractionStrategy && board.extractionStrategy !== "ats_api" ? (
+                            <div className="text-xs text-muted-foreground">Extraction: {strategyLabel(board.extractionStrategy)}</div>
+                          ) : null}
+                          {board.provider === "company_site" || board.provider === "workday" ? (
+                            <div className="text-xs text-muted-foreground">
+                              Last complete listing: {board.lastCompleteSnapshotAt ? formatDateTime(board.lastCompleteSnapshotAt) : "never (jobs are not expired)"}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell className="min-w-56">
                           <div className="font-mono text-xs">{board.boardToken}</div>
@@ -318,10 +331,12 @@ export function BoardsManager({
         </Card>
       ) : null}
 
+      <CareerUrlImporter saving={saving} />
+
       <Card>
         <CardHeader>
-          <CardTitle>Add a board</CardTitle>
-          <CardDescription>Paste a board URL to fill in the details, or enter them directly.</CardDescription>
+          <CardTitle>Add a board by identifier</CardTitle>
+          <CardDescription>For Greenhouse, Lever, Ashby and SmartRecruiters: paste a board URL to fill in the details, or enter them directly. Workday sites and company career pages are added with Import a careers page above.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} noValidate className="space-y-4">
@@ -348,7 +363,7 @@ export function BoardsManager({
                     value={form.provider}
                     onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value as AtsProvider }))}
                   >
-                    {ATS_PROVIDERS.map((p) => (
+                    {TOKEN_ATS_PROVIDERS.map((p) => (
                       <option key={p} value={p}>
                         {SOURCE_PROVIDER_LABELS[p]}
                       </option>

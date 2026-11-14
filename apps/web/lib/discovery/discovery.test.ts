@@ -10,15 +10,18 @@ import { nameFromDomain } from "./verify";
 
 describe("query registry", () => {
   const all = generateQueries();
-  it("is bounded, unique and covers all four providers and every focus area", () => {
+  it("is bounded, unique and covers every provider (ATS, Workday, company pages) and every focus area", () => {
     expect(all.length).toBeGreaterThan(100);
     expect(all.length).toBeLessThan(1000);
     expect(new Set(all.map((q) => q.text)).size).toBe(all.length);
-    expect(new Set(all.map((q) => q.provider))).toEqual(new Set(["greenhouse", "lever", "ashby", "smartrecruiters"]));
+    expect(new Set(all.map((q) => q.provider))).toEqual(new Set(["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "company_site"]));
+    expect(all.some((q) => q.provider === "workday" && q.text.startsWith("site:myworkdayjobs.com "))).toBe(true);
     for (const term of ["software engineer", "embedded software", "systems engineer", "cybersecurity", "machine learning", "co-op", "intern"]) {
       expect(all.some((q) => q.text.includes(`"${term}"`))).toBe(true);
     }
-    expect(all.every((q) => /^site:[a-z.-]+ /.test(q.text))).toBe(true);
+    // Every provider query is domain-restricted; generic careers queries are not (no host to restrict to).
+    expect(all.filter((q) => q.provider !== "company_site").every((q) => /^site:[a-z.-]+ /.test(q.text))).toBe(true);
+    expect(all.filter((q) => q.provider === "company_site").every((q) => !q.text.includes("site:"))).toBe(true);
   });
 
   const q = (over: Partial<QueryStats>): QueryStats => ({ id: over.text ?? "x", provider: "lever", text: "x", runs: 0, requests: 0, newCandidates: 0, verified: 0, exhausted: false, lastRunAt: null, ...over });
@@ -306,5 +309,28 @@ describe("Common Crawl import parsing", () => {
   it("reads crawl timestamps", () => {
     expect(crawlDate("20250915123456")?.toISOString()).toBe("2025-09-15T12:34:56.000Z");
     expect(crawlDate("garbage")).toBeNull();
+  });
+});
+
+describe("live search guard (Milestone 3D fix)", () => {
+  it("never uses a real search key against a test or e2e database unless explicitly allowed", async () => {
+    const { discoveryDepsFromEnv } = await import("./factory");
+    const prisma = {} as never;
+    const env = { TAVILY_API_KEY: "real-key", PROREZ_SEARCH_PROVIDER: "tavily" };
+    expect(discoveryDepsFromEnv(prisma, { ...env, DATABASE_URL: "postgresql://u@h/prorez_e2e" })().search).toBeNull();
+    expect(discoveryDepsFromEnv(prisma, { ...env, DATABASE_URL: "postgresql://u@h/prorez_test" })().search).toBeNull();
+    expect(discoveryDepsFromEnv(prisma, { ...env, DATABASE_URL: "postgresql://u@h/prorez_e2e", PROREZ_ALLOW_LIVE_SEARCH_IN_TESTS: "1" })().search?.name).toBe("tavily");
+    expect(discoveryDepsFromEnv(prisma, { ...env, DATABASE_URL: "postgresql://u@h/prorez_dev" })().search?.name).toBe("tavily");
+  });
+});
+
+describe("Tavily request body (Milestone 3D fix)", () => {
+  it("restricts site: queries to their domains and never sends an empty restriction", async () => {
+    const { tavilyRequestBody } = await import("./search");
+    expect(tavilyRequestBody('site:myworkdayjobs.com "intern"')).toMatchObject({ include_domains: ["myworkdayjobs.com"], include_domains_mode: "restrict" });
+    const open = tavilyRequestBody('"software engineer" "intern" careers Canada');
+    expect(open).not.toHaveProperty("include_domains");
+    expect(open).not.toHaveProperty("include_domains_mode");
+    expect(open.exclude_domains).toContain("linkedin.com");
   });
 });

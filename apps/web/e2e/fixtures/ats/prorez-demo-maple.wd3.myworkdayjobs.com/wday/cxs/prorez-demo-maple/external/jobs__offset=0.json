@@ -1,0 +1,8 @@
+{
+  "total": 2,
+  "jobPostings": [
+    { "title": "Software Developer Intern", "externalPath": "/job/Toronto-ON/Software-Developer-Intern_R100", "locationsText": "Toronto, ON", "postedOn": "Posted Today", "bulletFields": ["R100"] },
+    { "title": "Senior Staff Engineer", "externalPath": "/job/Toronto-ON/Senior-Staff-Engineer_R101", "locationsText": "Toronto, ON", "postedOn": "Posted Today", "bulletFields": ["R101"] }
+  ],
+  "facets": []
+}
